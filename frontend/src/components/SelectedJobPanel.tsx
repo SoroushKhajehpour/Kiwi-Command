@@ -1,16 +1,20 @@
 "use client";
 
 import { Battery, Bot, MapPin, Zap } from "lucide-react";
-import type { Robot, Vehicle } from "@/lib/types";
+import { DEMO_CHARGING_KWH_PER_SECOND } from "@/lib/charging";
+import { formatEta, formatKwh, formatPercent } from "@/lib/format";
+import type { ChargingSession, Robot, Vehicle } from "@/lib/types";
 import { batteryBarColor, VEHICLE_STATUS_META } from "@/lib/statusMeta";
 
 interface SelectedJobPanelProps {
   vehicle: Vehicle | null;
   robot: Robot | null;
-  eta: string | null;
+  session: ChargingSession | null;
+  etaSeconds: number | null;
   canDispatch: boolean;
   onRequestCharge: () => void;
   onDispatch: () => void;
+  onSimulateFault: () => void;
 }
 
 function DataRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -25,10 +29,12 @@ function DataRow({ label, value }: { label: string; value: React.ReactNode }) {
 export function SelectedJobPanel({
   vehicle,
   robot,
-  eta,
+  session,
+  etaSeconds,
   canDispatch,
   onRequestCharge,
   onDispatch,
+  onSimulateFault,
 }: SelectedJobPanelProps) {
   if (!vehicle) {
     return (
@@ -39,15 +45,16 @@ export function SelectedJobPanel({
   }
 
   const status = VEHICLE_STATUS_META[vehicle.status];
+  const displayedStatus = robot?.status === "en-route" ? "En route" : status.label;
   const primaryLabel = vehicle.status === "parked"
     ? "Request Charge"
     : vehicle.status === "waiting"
       ? "Dispatch Robot"
-      : vehicle.status === "charging"
-        ? "Pause Session"
-        : vehicle.status === "assigned"
-          ? "Send Backup Robot"
-          : "Session Complete";
+      : vehicle.status === "charging" || vehicle.status === "assigned"
+        ? "Simulate Robot Fault"
+        : vehicle.status === "completed"
+          ? "Request New Charge"
+          : "Unavailable";
 
   return (
     <section className="flex h-full min-h-0 flex-col border border-border bg-white">
@@ -61,14 +68,14 @@ export function SelectedJobPanel({
         </div>
         <div className="flex items-center gap-1.5 pt-1 text-[10px] font-semibold">
           <span className={`h-1.5 w-1.5 rounded-full ${vehicle.status === "waiting" ? "bg-warning" : "bg-kiwi-dark"}`} />
-          {status.label}
+          {displayedStatus}
         </div>
       </div>
 
       <div className="px-4 py-2">
         <div className="flex items-center justify-between text-[10px]">
           <span className="flex items-center gap-1.5 text-muted"><Battery className="h-3 w-3" /> State of charge</span>
-          <strong className="font-mono">{vehicle.battery.toFixed(0)}%</strong>
+          <strong className="font-mono">{formatPercent(vehicle.battery)}</strong>
         </div>
         <div className="mt-1.5 h-1.5 bg-surface">
           <div className={`h-full ${batteryBarColor(vehicle.battery)}`} style={{ width: `${vehicle.battery}%` }} />
@@ -77,18 +84,30 @@ export function SelectedJobPanel({
 
       <div className="px-4">
         <DataRow label="Location" value={<span className="inline-flex items-center gap-1 font-mono"><MapPin className="h-3 w-3 text-muted" />{vehicle.spotId}</span>} />
-        <DataRow label="Requested" value={<span className="inline-flex items-center gap-1"><Zap className="h-3 w-3 text-kiwi-dark" />{vehicle.requestedEnergyKwh ?? "—"} kWh</span>} />
+        <DataRow label="Requested" value={<span className="inline-flex items-center gap-1"><Zap className="h-3 w-3 text-kiwi-dark" />{vehicle.requestedEnergyKwh != null ? formatKwh(vehicle.requestedEnergyKwh) : "—"}</span>} />
         <DataRow label="Priority" value={vehicle.priority} />
         <DataRow label="Assigned unit" value={robot ? <span className="inline-flex items-center gap-1 font-mono"><Bot className="h-3 w-3 text-kiwi-dark" />{robot.name}</span> : "—"} />
-        <DataRow label="Arrival estimate" value={eta ?? "—"} />
+        <DataRow label="Arrival estimate" value={formatEta(etaSeconds)} />
+        {session && <DataRow label="Delivered" value={`${formatKwh(session.energyKwh)} / ${formatKwh(session.requestedKwh)}`} />}
+        {vehicle.status === "charging" && <DataRow label="Charge rate" value={`${DEMO_CHARGING_KWH_PER_SECOND.toFixed(1)} kWh/s accelerated`} />}
       </div>
 
       <div className="mt-auto border-t border-border p-2">
         <button
           type="button"
-          onClick={vehicle.status === "parked" ? onRequestCharge : onDispatch}
-          disabled={(vehicle.status === "waiting" && !canDispatch) || vehicle.status === "assigned" || vehicle.status === "charging" || vehicle.status === "completed"}
-          className="w-full rounded-md bg-foreground px-3 py-1.5 text-[10px] font-bold text-white transition-colors hover:bg-black disabled:cursor-not-allowed disabled:bg-gray-300"
+          onClick={
+            vehicle.status === "parked" || vehicle.status === "completed"
+              ? onRequestCharge
+              : vehicle.status === "waiting"
+                ? onDispatch
+                : onSimulateFault
+          }
+          disabled={vehicle.status === "waiting" && !canDispatch}
+          className={`w-full rounded-md px-3 py-1.5 text-[10px] font-bold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-300 ${
+            vehicle.status === "assigned" || vehicle.status === "charging"
+              ? "bg-error hover:bg-red-600"
+              : "bg-foreground hover:bg-black"
+          }`}
         >
           {primaryLabel}
         </button>

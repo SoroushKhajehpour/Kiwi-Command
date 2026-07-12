@@ -1,18 +1,28 @@
 import type { DispatchDecision } from "@/lib/dispatch";
+import { formatEta } from "@/lib/format";
 
-export function DispatchPanel({ decision }: { decision: DispatchDecision | null }) {
+export function DispatchPanel({
+  decision,
+  autoDispatch,
+}: {
+  decision: DispatchDecision | null;
+  autoDispatch: boolean;
+}) {
   return (
     <section className="flex h-full min-h-0 flex-col border border-border bg-white">
       <div className="flex h-9 items-center justify-between border-b border-border px-4">
         <h2 className="text-[10px] font-bold uppercase tracking-[0.11em]">Dispatch decision</h2>
-        <span className="font-mono text-[8px] text-muted">AUTO / RULESET 04</span>
+        <span className="font-mono text-[8px] font-bold text-muted">{autoDispatch ? "AUTO" : "MANUAL"} / RULESET 05</span>
       </div>
       {decision ? (
         <div className="min-h-0 flex-1 px-4 py-2.5">
           <p className="text-xs font-bold">
-            <span className="font-mono text-kiwi-dark">{decision.robot.name}</span>
-            {" selected for "}
-            <span className="font-mono">{decision.vehicle.id}</span>
+            <span className="font-mono text-kiwi-dark">{decision.selectedRobotId}</span>
+            {" → "}
+            <span className="font-mono">{decision.vehicleId}</span>
+          </p>
+          <p className="mt-1 font-mono text-[9px] text-muted">
+            {Math.round(decision.distanceMeters)}m route · ETA {formatEta(decision.etaSeconds)}
           </p>
           <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5">
             {decision.reasons.map((reason) => (
@@ -22,9 +32,17 @@ export function DispatchPanel({ decision }: { decision: DispatchDecision | null 
               </div>
             ))}
           </div>
-          <div className="mt-2 flex border-t border-border pt-2 text-[9px]">
-            <span className="text-muted">Arrival estimate</span>
-            <strong className="ml-auto font-mono">{decision.etaMinutes} min</strong>
+          <div className="mt-2 border-t border-border pt-1.5">
+            <p className="text-[8px] font-bold uppercase tracking-[0.08em] text-muted">Rejected units</p>
+            <div className="mt-1 flex flex-col gap-0.5">
+              {decision.rejectedRobots.map((rejected) => (
+                <p key={rejected.robotId} className="truncate text-[8px] text-muted">
+                  <span className="font-mono font-bold text-foreground">{rejected.robotId}</span>
+                  {": "}{rejected.reason}
+                </p>
+              ))}
+              {decision.rejectedRobots.length === 0 && <p className="text-[8px] text-muted">No other units rejected</p>}
+            </div>
           </div>
         </div>
       ) : (

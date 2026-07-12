@@ -1,7 +1,7 @@
 import type {
   ChargingSession,
   EventLogItem,
-  FleetMetric,
+  DockBay,
   GaragePosition,
   ParkingSpot,
   Robot,
@@ -19,6 +19,12 @@ export const GARAGE_LEVEL = "Level P2";
 /** Where robots park and recharge between jobs. */
 export const DOCK_POSITION: GaragePosition = { x: 5, y: 50 };
 
+export const DOCK_BAYS: DockBay[] = [
+  { id: "dock-1", position: { x: 5.5, y: 42 } },
+  { id: "dock-2", position: { x: 5.5, y: 50 } },
+  { id: "dock-3", position: { x: 5.5, y: 58 } },
+];
+
 /** Structural concrete columns drawn on the garage floor. */
 export const COLUMN_POSITIONS: GaragePosition[] = [
   { x: 31.5, y: 33 },
@@ -29,23 +35,14 @@ export const COLUMN_POSITIONS: GaragePosition[] = [
   { x: 85.5, y: 67 },
 ];
 
-/* Neutral paint colors for CarTopView */
-const PAINT = {
-  white: "#f4f4f3",
-  silver: "#d6d8da",
-  gray: "#a5abb3",
-  charcoal: "#4b5563",
-  black: "#26282c",
-};
-
 export const INITIAL_VEHICLES: Vehicle[] = [
-  { id: "EV-4712", spotId: "P2-15", model: "Polestar 2", paint: PAINT.silver, battery: 76, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
-  { id: "EV-4821", spotId: "P2-18", model: "Hyundai IONIQ 5", paint: PAINT.charcoal, battery: 18, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 28, priority: "Urgent" },
-  { id: "EV-2054", spotId: "P2-20", model: "Tesla Model 3", paint: PAINT.black, battery: 64, status: "charging", assignedRobotId: "R-02", requestedEnergyKwh: 24, priority: "Normal" },
-  { id: "EV-7391", spotId: "P2-22", model: "Kia EV6", paint: PAINT.white, battery: 92, status: "completed", assignedRobotId: null, requestedEnergyKwh: 18.8, priority: "Normal" },
-  { id: "EV-3568", spotId: "A2", model: "Ford Mustang Mach-E", paint: PAINT.gray, battery: 41, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
-  { id: "EV-4466", spotId: "A5", model: "Nissan Ariya", paint: PAINT.silver, battery: 29, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 22, priority: "Normal" },
-  { id: "EV-1730", spotId: "A8", model: "Tesla Model Y", paint: PAINT.white, battery: 67, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
+  { id: "EV-4712", spotId: "P2-15", model: "Polestar 2", paint: "white", battery: 76, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
+  { id: "EV-4821", spotId: "P2-18", model: "Hyundai IONIQ 5", paint: "charcoal", battery: 18, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 28, priority: "Urgent" },
+  { id: "EV-2054", spotId: "P2-20", model: "Tesla Model 3", paint: "black", battery: 64, status: "charging", assignedRobotId: "R-02", requestedEnergyKwh: 24, priority: "Normal" },
+  { id: "EV-7391", spotId: "P2-22", model: "Kia EV6", paint: "white", battery: 92, status: "completed", assignedRobotId: null, requestedEnergyKwh: 18.8, priority: "Normal" },
+  { id: "EV-3568", spotId: "A2", model: "Ford Mustang Mach-E", paint: "silver", battery: 41, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
+  { id: "EV-4466", spotId: "A5", model: "Nissan Ariya", paint: "silver", battery: 29, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 22, priority: "Normal" },
+  { id: "EV-1730", spotId: "A8", model: "Tesla Model Y", paint: "blue", battery: 67, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
 ];
 
 /**
@@ -82,13 +79,14 @@ export const INITIAL_ROBOTS: Robot[] = [
   {
     id: "R-01",
     name: "R-01",
-    status: "idle",
+    status: "docked",
     battery: 82,
-    position: DOCK_POSITION,
+    position: DOCK_BAYS[0].position,
     targetPosition: null,
     route: [],
     routeIndex: 0,
     heading: 0,
+    dockBayId: "dock-1",
     assignedVehicleId: null,
   },
   {
@@ -96,11 +94,12 @@ export const INITIAL_ROBOTS: Robot[] = [
     name: "R-02",
     status: "charging",
     battery: 64,
-    position: { x: 63, y: 27 }, // lane-side of P2-20, nozzle at the car
+    position: { x: 66, y: 28 },
     targetPosition: null,
     route: [],
     routeIndex: 0,
     heading: 0,
+    dockBayId: null,
     assignedVehicleId: "EV-2054",
   },
   {
@@ -109,10 +108,11 @@ export const INITIAL_ROBOTS: Robot[] = [
     status: "returning",
     battery: 41,
     position: { x: 42, y: 52 },
-    targetPosition: DOCK_POSITION,
-    route: [{ x: 42, y: 50 }, { x: 5, y: 50 }],
+    targetPosition: DOCK_BAYS[1].position,
+    route: [{ x: 42, y: 50 }, DOCK_BAYS[1].position],
     routeIndex: 0,
     heading: 270,
+    dockBayId: "dock-2",
     assignedVehicleId: null,
   },
 ];
@@ -125,6 +125,8 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
     robotId: null,
     status: "queued",
     energyKwh: 0,
+    requestedKwh: 22,
+    etaSeconds: null,
     startedAt: "15:48",
   },
   {
@@ -134,6 +136,8 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
     robotId: null,
     status: "queued",
     energyKwh: 0,
+    requestedKwh: 28,
+    etaSeconds: null,
     startedAt: "15:42",
   },
   {
@@ -143,6 +147,8 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
     robotId: "R-02",
     status: "active",
     energyKwh: 12.4,
+    requestedKwh: 24,
+    etaSeconds: null,
     startedAt: "15:07",
   },
   {
@@ -152,6 +158,8 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
     robotId: "R-03",
     status: "completed",
     energyKwh: 18.8,
+    requestedKwh: 18.8,
+    etaSeconds: null,
     startedAt: "13:22",
   },
 ];
@@ -159,17 +167,8 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
 /** Running total for the "Energy delivered today" metric card. */
 export const ENERGY_DELIVERED_TODAY_KWH = 148.6;
 
-export const BASE_METRICS: FleetMetric[] = [
-  { id: "robots", label: "Fleet online", value: "3/3" },
-  { id: "active", label: "Jobs active", value: "1" },
-  { id: "waiting", label: "Queue depth", value: "2" },
-  { id: "energy", label: "Energy today", value: "148.6 kWh" },
-  { id: "eta", label: "Avg ETA", value: "4.2 min" },
-  { id: "utilization", label: "Robot utilization", value: "67%" },
-];
-
 export const INITIAL_EVENTS: EventLogItem[] = [
-  { id: "E-102", message: "EV-4466 requested 22 kWh at A5", timestamp: "01:04", type: "request" },
+  { id: "E-102", message: "EV-4466 requested 22.0 kWh at A5", timestamp: "01:04", type: "request" },
   { id: "E-101", message: "R-03 returned to dock", timestamp: "01:02", type: "returning" },
   { id: "E-103", message: "R-02 charging EV-2054", timestamp: "00:58", type: "charging" },
 ];

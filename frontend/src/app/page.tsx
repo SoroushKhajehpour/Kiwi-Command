@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { advanceCharging } from "@/lib/charging";
 import { DispatchPanel } from "@/components/DispatchPanel";
 import { EventFeed } from "@/components/EventFeed";
 import { GarageMap } from "@/components/GarageMap";
@@ -9,9 +10,9 @@ import { RobotStatusStrip } from "@/components/RobotStatusStrip";
 import { SelectedJobPanel } from "@/components/SelectedJobPanel";
 import { SessionTable } from "@/components/SessionTable";
 import { selectBestRobot, type DispatchDecision } from "@/lib/dispatch";
+import { formatKwh } from "@/lib/format";
 import {
-  BASE_METRICS,
-  DOCK_POSITION,
+  DOCK_BAYS,
   ENERGY_DELIVERED_TODAY_KWH,
   INITIAL_EVENTS,
   INITIAL_ROBOTS,
@@ -19,10 +20,15 @@ import {
   INITIAL_VEHICLES,
   PARKING_SPOTS,
 } from "@/lib/mockData";
-import { advanceRobot, buildDockRoute, buildServiceRoute } from "@/lib/movement";
-import type { ChargingSession, EventLogItem, FleetMetric, Robot, Vehicle } from "@/lib/types";
+import { deriveOperationsMetrics } from "@/lib/metrics";
+import { advanceRobot } from "@/lib/movement";
+import {
+  buildRouteToDock,
+  etaSecondsForRoute,
+  getAvailableDockBay,
+} from "@/lib/routes";
+import type { ChargingSession, EventLogItem, Robot, Vehicle } from "@/lib/types";
 
-const CHARGE_TARGET = 90;
 const initialTarget = INITIAL_VEHICLES.find((vehicle) => vehicle.id === "EV-4466") ?? null;
 
 function nowLabel(): string {
@@ -36,8 +42,9 @@ export default function Home() {
   const [events, setEvents] = useState<EventLogItem[]>(INITIAL_EVENTS);
   const [energyToday, setEnergyToday] = useState(ENERGY_DELIVERED_TODAY_KWH);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>("A5");
+  const [autoDispatch, setAutoDispatch] = useState(true);
   const [lastDecision, setLastDecision] = useState<DispatchDecision | null>(
-    initialTarget ? selectBestRobot(INITIAL_ROBOTS, initialTarget) : null,
+    initialTarget ? selectBestRobot(INITIAL_ROBOTS, initialTarget, PARKING_SPOTS, DOCK_BAYS) : null,
   );
 
   const robotsRef = useRef(robots);
@@ -73,7 +80,15 @@ export default function Home() {
           return { ...advanced.robot, status: "charging" as const, route: [], routeIndex: 0 };
         }
         dockArrivals.push(robot.id);
-        return { ...advanced.robot, status: "idle" as const, route: [], routeIndex: 0, assignedVehicleId: null };
+        const bay = DOCK_BAYS.find((item) => item.id === robot.dockBayId);
+        return {
+          ...advanced.robot,
+          status: "docked" as const,
+          position: bay?.position ?? advanced.robot.position,
+          route: [],
+          routeIndex: 0,
+          assignedVehicleId: null,
+        };
       });
 
       let nextVehicles = vehiclesRef.current;
@@ -88,12 +103,12 @@ export default function Home() {
         ));
         nextSessions = nextSessions.map((session) => (
           serviceArrivals.some((arrival) => arrival.vehicleId === session.vehicleId) && session.status === "queued"
-            ? { ...session, status: "active" as const, startedAt: nowLabel() }
+            ? { ...session, status: "active" as const, startedAt: nowLabel(), etaSeconds: null }
             : session
         ));
         serviceArrivals.forEach((arrival, index) => newEvents.push({
           id: `E-arrive-${Date.now()}-${index}`,
-          message: `${arrival.robotId} connected to ${arrival.vehicleId}`,
+          message: `${arrival.robotId} arrived and started charging ${arrival.vehicleId}`,
           timestamp: nowLabel(),
           type: "charging",
         }));
@@ -102,7 +117,7 @@ export default function Home() {
       if (dockArrivals.length > 0) {
         dockArrivals.forEach((robotId, index) => newEvents.push({
           id: `E-dock-${Date.now()}-${index}`,
-          message: `${robotId} returned to dock`,
+          message: `${robotId} docked and started recharging`,
           timestamp: nowLabel(),
           type: "returning",
         }));
@@ -111,55 +126,96 @@ export default function Home() {
       if (chargeElapsed >= 0.5) {
         const chargingRobots = nextRobots.filter((robot) => robot.status === "charging" && robot.assignedVehicleId);
         const completed: Array<{ robotId: string; vehicleId: string }> = [];
-        const gain = 0.35 * (chargeElapsed / 0.5);
-        const energyGain = 0.08 * (chargeElapsed / 0.5);
+        const chargingElapsed = chargeElapsed;
         chargeElapsed = 0;
 
         if (chargingRobots.length > 0) {
-          nextVehicles = nextVehicles.map((vehicle) => {
-            const robot = chargingRobots.find((item) => item.assignedVehicleId === vehicle.id);
-            if (!robot) return vehicle;
-            const battery = Math.min(100, vehicle.battery + gain);
-            const complete = battery >= CHARGE_TARGET;
-            if (complete) completed.push({ robotId: robot.id, vehicleId: vehicle.id });
-            return {
-              ...vehicle,
-              battery,
-              status: complete ? "completed" as const : "charging" as const,
-              assignedRobotId: complete ? null : vehicle.assignedRobotId,
-            };
+          let deliveredTotal = 0;
+          const updatedVehicles = [...nextVehicles];
+          const updatedSessions = [...nextSessions];
+
+          chargingRobots.forEach((robot) => {
+            const vehicleIndex = updatedVehicles.findIndex((vehicle) => vehicle.id === robot.assignedVehicleId);
+            const sessionIndex = updatedSessions.findIndex((session) => (
+              session.vehicleId === robot.assignedVehicleId && session.status === "active"
+            ));
+            if (vehicleIndex < 0 || sessionIndex < 0) return;
+
+            const result = advanceCharging(
+              updatedVehicles[vehicleIndex],
+              updatedSessions[sessionIndex],
+              chargingElapsed,
+            );
+            updatedVehicles[vehicleIndex] = result.vehicle;
+            updatedSessions[sessionIndex] = result.session;
+            deliveredTotal += result.deliveredKwh;
+            if (result.complete) completed.push({ robotId: robot.id, vehicleId: result.vehicle.id });
           });
-          nextSessions = nextSessions.map((session) => {
-            const isCharging = chargingRobots.some((robot) => robot.assignedVehicleId === session.vehicleId);
-            if (!isCharging || session.status !== "active") return session;
-            const complete = completed.some((item) => item.vehicleId === session.vehicleId);
-            return { ...session, energyKwh: session.energyKwh + energyGain, status: complete ? "completed" as const : "active" as const };
+
+          nextVehicles = updatedVehicles;
+          nextSessions = updatedSessions;
+          nextRobots = nextRobots.map((robot) => {
+            if (robot.status !== "charging" || !robot.assignedVehicleId) return robot;
+            const deliveredByRobot = deliveredTotal / Math.max(1, chargingRobots.length);
+            return { ...robot, battery: Math.max(0, robot.battery - deliveredByRobot * 0.45) };
           });
-          setEnergyToday((current) => current + energyGain * chargingRobots.length);
+          robotsChanged = true;
+          if (deliveredTotal > 0) setEnergyToday((current) => current + deliveredTotal);
         }
 
         if (completed.length > 0) {
+          const claimedDockBays = new Set(
+            nextRobots
+              .filter((robot) => !completed.some((job) => job.robotId === robot.id))
+              .map((robot) => robot.dockBayId)
+              .filter((dockBayId): dockBayId is string => Boolean(dockBayId)),
+          );
           nextRobots = nextRobots.map((robot) => {
             const job = completed.find((item) => item.robotId === robot.id);
             if (!job) return robot;
-            const route = buildDockRoute(robot.position, DOCK_POSITION);
+            const bay = DOCK_BAYS.find((item) => !claimedDockBays.has(item.id)) ?? null;
+            if (!bay) {
+              return {
+                ...robot,
+                status: "idle" as const,
+                assignedVehicleId: null,
+                dockBayId: null,
+                route: [],
+                routeIndex: 0,
+                targetPosition: null,
+              };
+            }
+            claimedDockBays.add(bay.id);
+            const route = buildRouteToDock(robot.position, bay);
             return {
               ...robot,
               status: "returning" as const,
               assignedVehicleId: null,
+              dockBayId: bay.id,
               route,
               routeIndex: 0,
-              targetPosition: DOCK_POSITION,
+              targetPosition: bay.position,
             };
           });
           robotsChanged = true;
           completed.forEach((job, index) => newEvents.push({
             id: `E-complete-${Date.now()}-${index}`,
-            message: `${job.vehicleId} charge complete; ${job.robotId} returning`,
+            message: `${job.vehicleId} charge complete; ${job.robotId} returning to dock`,
             timestamp: nowLabel(),
             type: "charging",
           }));
         }
+
+        nextRobots = nextRobots.map((robot) => {
+          if (robot.status !== "docked" || robot.battery >= 95) {
+            return robot.battery >= 95 && robot.status === "docked"
+              ? { ...robot, status: "idle" as const }
+              : robot;
+          }
+          const battery = Math.min(95, robot.battery + 0.18 * (chargingElapsed / 0.5));
+          return battery >= 95 ? { ...robot, battery, status: "idle" as const } : { ...robot, battery };
+        });
+        robotsChanged = true;
       }
 
       if (robotsChanged) {
@@ -186,19 +242,21 @@ export default function Home() {
   );
   const assignedRobot = robots.find((robot) => robot.id === selectedVehicle?.assignedRobotId) ?? null;
 
-  const metrics = useMemo<FleetMetric[]>(() => BASE_METRICS.map((metric) => {
-    if (metric.id === "robots") return { ...metric, value: `${robots.length}/3` };
-    if (metric.id === "active") return { ...metric, value: `${robots.filter((robot) => robot.status === "charging" || robot.status === "en-route").length}` };
-    if (metric.id === "waiting") return { ...metric, value: `${vehicles.filter((vehicle) => vehicle.status === "waiting").length}` };
-    if (metric.id === "energy") return { ...metric, value: `${energyToday.toFixed(1)} kWh` };
-    return metric;
-  }), [energyToday, robots, vehicles]);
+  const operationsMetrics = useMemo(
+    () => deriveOperationsMetrics(robots, vehicles, sessions, events, energyToday, DOCK_BAYS),
+    [energyToday, events, robots, sessions, vehicles],
+  );
 
   function addEvent(message: string, type: EventLogItem["type"]) {
     setEvents((current) => [{ id: `E-${Date.now()}`, message, timestamp: nowLabel(), type }, ...current]);
   }
 
-  function requestChargeFor(vehicle: Vehicle): Vehicle {
+  function requestChargeFor(vehicle: Vehicle): Vehicle | null {
+    const duplicate = sessionsRef.current.some((session) => (
+      session.vehicleId === vehicle.id && session.status !== "completed"
+    ));
+    if (duplicate || (vehicle.status !== "parked" && vehicle.status !== "completed")) return null;
+
     const requested = { ...vehicle, status: "waiting" as const, requestedEnergyKwh: vehicle.requestedEnergyKwh ?? 22, priority: "Normal" as const };
     const nextVehicles = vehiclesRef.current.map((item) => item.id === vehicle.id ? requested : item);
     const nextSessions: ChargingSession[] = [{
@@ -208,41 +266,46 @@ export default function Home() {
       robotId: null,
       status: "queued",
       energyKwh: 0,
+      requestedKwh: requested.requestedEnergyKwh,
+      etaSeconds: null,
       startedAt: nowLabel(),
     }, ...sessionsRef.current];
     vehiclesRef.current = nextVehicles;
     sessionsRef.current = nextSessions;
     setVehicles(nextVehicles);
     setSessions(nextSessions);
-    addEvent(`${vehicle.id} requested ${requested.requestedEnergyKwh} kWh at ${vehicle.spotId}`, "request");
+    addEvent(`${vehicle.id} requested ${formatKwh(requested.requestedEnergyKwh)} at ${vehicle.spotId}`, "request");
     return requested;
   }
 
-  function dispatchVehicle(vehicle: Vehicle) {
-    if (vehicle.status !== "waiting") return;
-    const decision = selectBestRobot(robotsRef.current, vehicle);
-    const spot = PARKING_SPOTS.find((item) => item.id === vehicle.spotId);
-    if (!decision || !spot) return;
+  function dispatchVehicle(vehicle: Vehicle, reassignment = false): DispatchDecision | null {
+    if (vehicle.status !== "waiting") return null;
+    const decision = selectBestRobot(robotsRef.current, vehicle, PARKING_SPOTS, DOCK_BAYS);
+    if (!decision) {
+      addEvent(`No eligible robot available for ${vehicle.id}; job remains queued`, "dispatch");
+      setLastDecision(null);
+      return null;
+    }
 
-    const route = buildServiceRoute(decision.robot.position, spot);
     const nextRobots = robotsRef.current.map((robot) => (
-      robot.id === decision.robot.id
+      robot.id === decision.selectedRobotId
         ? {
             ...robot,
             status: "en-route" as const,
             assignedVehicleId: vehicle.id,
-            route,
+            dockBayId: null,
+            route: decision.route,
             routeIndex: 0,
-            targetPosition: route[route.length - 1] ?? null,
+            targetPosition: decision.route[decision.route.length - 1] ?? null,
           }
         : robot
     ));
     const nextVehicles = vehiclesRef.current.map((item) => (
-      item.id === vehicle.id ? { ...item, assignedRobotId: decision.robot.id, status: "assigned" as const } : item
+      item.id === vehicle.id ? { ...item, assignedRobotId: decision.selectedRobotId, status: "assigned" as const } : item
     ));
     const nextSessions = sessionsRef.current.map((session) => (
       session.vehicleId === vehicle.id && session.status === "queued"
-        ? { ...session, robotId: decision.robot.id }
+        ? { ...session, robotId: decision.selectedRobotId, etaSeconds: decision.etaSeconds }
         : session
     ));
 
@@ -253,48 +316,162 @@ export default function Home() {
     setVehicles(nextVehicles);
     setSessions(nextSessions);
     setLastDecision(decision);
-    addEvent(`${decision.robot.id} dispatched to ${vehicle.id}`, "dispatch");
+    addEvent(
+      reassignment
+        ? `${vehicle.id} reassigned to backup ${decision.selectedRobotId}`
+        : `${decision.selectedRobotId} dispatched to ${vehicle.id}`,
+      reassignment ? "reassignment" : "dispatch",
+    );
+    return decision;
   }
 
   function handleHeaderRequestCharge() {
-    const target = vehiclesRef.current.find((vehicle) => vehicle.id === "EV-4466")
-      ?? vehiclesRef.current.find((vehicle) => vehicle.status === "waiting");
-    if (!target) return;
-    setSelectedSpotId(target.spotId);
-    if (target.status === "waiting") dispatchVehicle(target);
+    if (!selectedVehicle) return;
+    if (selectedVehicle.status === "parked" || selectedVehicle.status === "completed") {
+      const request = requestChargeFor(selectedVehicle);
+      if (request && autoDispatch) dispatchVehicle(request);
+      return;
+    }
+    if (selectedVehicle.status === "waiting") dispatchVehicle(selectedVehicle);
   }
 
-  const eta = assignedRobot?.status === "en-route" ? "2 min" : assignedRobot?.status === "charging" ? "Arrived" : null;
+  function simulateFault(robot: Robot) {
+    if (robot.status === "faulted") return;
+    const vehicleId = robot.assignedVehicleId;
+    const nextRobots = robotsRef.current.map((item) => (
+      item.id === robot.id
+        ? {
+            ...item,
+            status: "faulted" as const,
+            assignedVehicleId: null,
+            dockBayId: null,
+            route: [],
+            routeIndex: 0,
+            targetPosition: null,
+          }
+        : item
+    ));
+    const nextVehicles = vehiclesRef.current.map((vehicle) => (
+      vehicle.id === vehicleId
+        ? { ...vehicle, status: "waiting" as const, assignedRobotId: null }
+        : vehicle
+    ));
+    const nextSessions = sessionsRef.current.map((session) => (
+      session.vehicleId === vehicleId && session.status !== "completed"
+        ? { ...session, status: "queued" as const, robotId: null, etaSeconds: null }
+        : session
+    ));
+
+    robotsRef.current = nextRobots;
+    vehiclesRef.current = nextVehicles;
+    sessionsRef.current = nextSessions;
+    setRobots(nextRobots);
+    setVehicles(nextVehicles);
+    setSessions(nextSessions);
+
+    if (!vehicleId) {
+      addEvent(`${robot.id} faulted; unit removed from service`, "fault");
+      return;
+    }
+
+    const waitingVehicle = nextVehicles.find((vehicle) => vehicle.id === vehicleId);
+    addEvent(`${robot.id} faulted while serving ${vehicleId}; job returned to queue`, "fault");
+    if (autoDispatch && waitingVehicle) dispatchVehicle(waitingVehicle, true);
+  }
+
+  function clearFault(robotId: string) {
+    const robot = robotsRef.current.find((item) => item.id === robotId);
+    if (!robot || robot.status !== "faulted") return;
+    const bay = getAvailableDockBay(robotsRef.current, DOCK_BAYS, robotId);
+    const nextRobots = robotsRef.current.map((item) => {
+      if (item.id !== robotId) return item;
+      if (!bay) return { ...item, status: "idle" as const };
+      const route = buildRouteToDock(item.position, bay);
+      return {
+        ...item,
+        status: "returning" as const,
+        dockBayId: bay.id,
+        route,
+        routeIndex: 0,
+        targetPosition: bay.position,
+      };
+    });
+    robotsRef.current = nextRobots;
+    setRobots(nextRobots);
+    addEvent(`${robotId} fault cleared; returning to ${bay?.id ?? "staging"}`, "fault");
+  }
+
+  function toggleDispatchMode() {
+    const nextMode = !autoDispatch;
+    setAutoDispatch(nextMode);
+    addEvent(`Dispatch mode changed to ${nextMode ? "AUTO" : "MANUAL"}`, "dispatch");
+    if (nextMode) {
+      const waiting = vehiclesRef.current.find((vehicle) => vehicle.status === "waiting");
+      if (waiting) dispatchVehicle(waiting);
+    }
+  }
+
+  const selectedSession = sessions.find((session) => (
+    session.vehicleId === selectedVehicle?.id && session.status !== "completed"
+  )) ?? sessions.find((session) => session.vehicleId === selectedVehicle?.id) ?? null;
+  const selectedEtaSeconds = assignedRobot?.status === "en-route"
+    ? etaSecondsForRoute(assignedRobot.position, assignedRobot.route, assignedRobot.routeIndex)
+    : null;
+  const canRequest = Boolean(
+    selectedVehicle
+    && (selectedVehicle.status === "parked" || (selectedVehicle.status === "completed" && selectedVehicle.battery < 95)),
+  );
+  const canDispatch = Boolean(
+    selectedVehicle?.status === "waiting"
+    && selectBestRobot(robots, selectedVehicle, PARKING_SPOTS, DOCK_BAYS),
+  );
+  const headerLabel = !selectedVehicle
+    ? "Select Vehicle"
+    : selectedVehicle.status === "waiting"
+      ? "Dispatch Robot"
+      : canRequest
+        ? "Request Charge"
+        : "Job In Progress";
 
   return (
     <div className="flex h-dvh min-h-0 flex-col bg-surface">
-      <Header onRequestCharge={handleHeaderRequestCharge} />
+      <Header
+        onRequestCharge={handleHeaderRequestCharge}
+        requestLabel={headerLabel}
+        requestDisabled={!selectedVehicle || (!canRequest && selectedVehicle.status !== "waiting")}
+        autoDispatch={autoDispatch}
+        onToggleDispatchMode={toggleDispatchMode}
+      />
       <main className="mx-auto grid min-h-0 w-full max-w-[1440px] flex-1 grid-cols-1 gap-2 overflow-y-auto p-3 lg:grid-cols-12 lg:overflow-hidden xl:px-6">
         <div className="grid min-h-[620px] gap-2 lg:col-span-8 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_132px]">
           <GarageMap
             spots={PARKING_SPOTS}
             vehicles={vehicles}
             robots={robots}
-            metrics={metrics}
+            metrics={operationsMetrics.commandBar}
             selectedSpotId={selectedSpotId}
+            autoDispatch={autoDispatch}
+            dockOccupancy={operationsMetrics.dockOccupancy}
             onSelectSpot={setSelectedSpotId}
           />
           <div className="grid min-h-0 grid-cols-12 gap-2">
-            <div className="col-span-5 min-h-0"><RobotStatusStrip robots={robots} /></div>
-            <div className="col-span-7 min-h-0"><SessionTable sessions={sessions} /></div>
+            <div className="col-span-5 min-h-0"><RobotStatusStrip robots={robots} onClearFault={clearFault} /></div>
+            <div className="col-span-7 min-h-0"><SessionTable sessions={sessions} robots={robots} /></div>
           </div>
         </div>
 
-        <aside className="grid min-h-[620px] gap-2 lg:col-span-4 lg:min-h-0 lg:grid-rows-[276px_150px_minmax(0,1fr)]">
+        <aside className="grid min-h-[620px] gap-2 lg:col-span-4 lg:min-h-0 lg:grid-rows-[300px_210px_minmax(0,1fr)]">
           <SelectedJobPanel
             vehicle={selectedVehicle}
             robot={assignedRobot}
-            eta={eta}
-            canDispatch={Boolean(selectBestRobot(robots, selectedVehicle ?? INITIAL_VEHICLES[0]))}
-            onRequestCharge={() => selectedVehicle && requestChargeFor(selectedVehicle)}
+            session={selectedSession}
+            etaSeconds={selectedEtaSeconds}
+            canDispatch={canDispatch}
+            onRequestCharge={handleHeaderRequestCharge}
             onDispatch={() => selectedVehicle && dispatchVehicle(selectedVehicle)}
+            onSimulateFault={() => assignedRobot && simulateFault(assignedRobot)}
           />
-          <DispatchPanel decision={lastDecision} />
+          <DispatchPanel decision={lastDecision} autoDispatch={autoDispatch} />
           <EventFeed events={events} />
         </aside>
       </main>

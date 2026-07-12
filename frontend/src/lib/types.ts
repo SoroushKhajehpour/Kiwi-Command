@@ -4,11 +4,13 @@
  * so swapping mock data for API responses should be low-friction.
  */
 
-export type RobotStatus = "idle" | "en-route" | "charging" | "returning";
+export type RobotStatus = "idle" | "docked" | "en-route" | "charging" | "returning" | "faulted";
 
 export type VehicleStatus = "parked" | "waiting" | "assigned" | "charging" | "completed";
 
 export type SessionStatus = "queued" | "active" | "completed";
+
+export type VehiclePaint = "white" | "black" | "charcoal" | "silver" | "blue" | "green";
 
 /** Position on the garage canvas, in percentages (0–100) of its width/height. */
 export interface GaragePosition {
@@ -27,6 +29,7 @@ export interface Robot {
   routeIndex: number;
   /** Compass-like heading in degrees; 0 points up, 90 points right. */
   heading: number;
+  dockBayId: string | null;
   /** Vehicle this robot is currently serving, if any. */
   assignedVehicleId: string | null;
 }
@@ -35,8 +38,7 @@ export interface Vehicle {
   id: string;
   spotId: string;
   model: string;
-  /** Neutral paint color used by CarTopView (hex). */
-  paint: string;
+  paint: VehiclePaint;
   battery: number;
   status: VehicleStatus;
   assignedRobotId: string | null;
@@ -60,6 +62,8 @@ export interface ChargingSession {
   robotId: string | null;
   status: SessionStatus;
   energyKwh: number;
+  requestedKwh: number;
+  etaSeconds: number | null;
   /** Human-readable start time, e.g. "14:05". */
   startedAt: string;
 }
@@ -75,5 +79,10 @@ export interface EventLogItem {
   id: string;
   message: string;
   timestamp: string;
-  type: "dispatch" | "request" | "charging" | "returning";
+  type: "dispatch" | "request" | "charging" | "returning" | "dock" | "fault" | "reassignment";
+}
+
+export interface DockBay {
+  id: string;
+  position: GaragePosition;
 }

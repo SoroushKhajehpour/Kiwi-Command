@@ -1,14 +1,25 @@
+import type { VehiclePaint } from "@/lib/types";
+
 interface CarTopViewProps {
-  /** Body paint color (hex). */
-  paint: string;
+  paint: VehiclePaint;
   className?: string;
 }
+
+const PAINT_COLORS: Record<VehiclePaint, { body: string; border: string }> = {
+  white: { body: "#F8FAFC", border: "#CBD5E1" },
+  silver: { body: "#CBD5E1", border: "#94A3B8" },
+  charcoal: { body: "#475569", border: "#334155" },
+  black: { body: "#111827", border: "#020617" },
+  blue: { body: "#3B82F6", border: "#1D4ED8" },
+  green: { body: "#76935A", border: "#526B3D" },
+};
 
 /**
  * Top-down passenger car rendered as inline SVG.
  * Nose points up; rotate via the parent element when needed.
  */
 export function CarTopView({ paint, className }: CarTopViewProps) {
+  const colors = PAINT_COLORS[paint];
   return (
     <svg
       viewBox="0 0 64 116"
@@ -31,14 +42,14 @@ export function CarTopView({ paint, className }: CarTopViewProps) {
            C 16 112 7 105 7 92
            L 7 46 L 9 20
            C 10 8 19 2 32 2 Z"
-        fill={paint}
-        stroke="rgba(23, 23, 23, 0.25)"
+        fill={colors.body}
+        stroke={colors.border}
         strokeWidth="1"
       />
 
       {/* Side mirrors */}
-      <rect x="1" y="40" width="7" height="5" rx="2" fill={paint} stroke="rgba(23,23,23,0.25)" strokeWidth="0.75" />
-      <rect x="56" y="40" width="7" height="5" rx="2" fill={paint} stroke="rgba(23,23,23,0.25)" strokeWidth="0.75" />
+      <rect x="1" y="40" width="7" height="5" rx="2" fill={colors.body} stroke={colors.border} strokeWidth="0.75" />
+      <rect x="56" y="40" width="7" height="5" rx="2" fill={colors.body} stroke={colors.border} strokeWidth="0.75" />
 
       {/* Windshield */}
       <path

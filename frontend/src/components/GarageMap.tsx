@@ -1,7 +1,8 @@
 "use client";
 
 import { Activity } from "lucide-react";
-import { COLUMN_POSITIONS, DOCK_POSITION, GARAGE_LEVEL, GARAGE_NAME } from "@/lib/mockData";
+import { COLUMN_POSITIONS, DOCK_BAYS, GARAGE_LEVEL, GARAGE_NAME } from "@/lib/mockData";
+import { getVehicleConnectionPoint } from "@/lib/routes";
 import type { FleetMetric, ParkingSpot, Robot, Vehicle } from "@/lib/types";
 import { RobotMarker } from "./RobotMarker";
 import { VehicleMarker } from "./VehicleMarker";
@@ -12,6 +13,8 @@ interface GarageMapProps {
   robots: Robot[];
   metrics: FleetMetric[];
   selectedSpotId: string | null;
+  autoDispatch: boolean;
+  dockOccupancy: number;
   onSelectSpot: (spotId: string) => void;
 }
 
@@ -34,10 +37,19 @@ export function GarageMap({
   robots,
   metrics,
   selectedSpotId,
+  autoDispatch,
+  dockOccupancy,
   onSelectSpot,
 }: GarageMapProps) {
   const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
   const movingRobots = robots.filter((robot) => robot.routeIndex < robot.route.length);
+  const spotById = new Map(spots.map((spot) => [spot.id, spot]));
+  const chargingConnections = robots.flatMap((robot) => {
+    if (robot.status !== "charging" || !robot.assignedVehicleId) return [];
+    const vehicle = vehicleById.get(robot.assignedVehicleId);
+    const spot = vehicle ? spotById.get(vehicle.spotId) : undefined;
+    return spot ? [{ robot, connection: getVehicleConnectionPoint(spot) }] : [];
+  });
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden border border-border bg-white">
@@ -48,9 +60,9 @@ export function GarageMap({
           <span className="font-mono text-[9px] text-muted">{GARAGE_LEVEL}</span>
         </div>
         <div className="flex items-center gap-4 text-[9px] text-muted">
-          <span>Network <strong className="font-semibold text-kiwi-dark">Healthy</strong></span>
-          <span>Dock <strong className="font-semibold text-foreground">2/3</strong></span>
-          <span>Mode <strong className="font-semibold text-foreground">AUTO</strong></span>
+          <span>Network <strong className="font-semibold text-kiwi-dark">Simulation live</strong></span>
+          <span>Dock <strong className="font-semibold text-foreground">{dockOccupancy}/{DOCK_BAYS.length}</strong></span>
+          <span>Mode <strong className="font-semibold text-foreground">{autoDispatch ? "AUTO" : "MANUAL"}</strong></span>
         </div>
       </div>
 
@@ -92,22 +104,19 @@ export function GarageMap({
           </div>
         ))}
 
-        {[{ x: 13, y: 35 }, { x: 94, y: 65 }].map((sensor, index) => (
+        <div
+          className="absolute -translate-x-1/2 -translate-y-1/2 border-2 border-dashed border-kiwi-dark/50 bg-kiwi-soft/60"
+          style={{ left: "5.5%", top: "50%", width: "8%", height: "35%" }}
+        >
+          <span className="absolute left-1/2 top-1 -translate-x-1/2 whitespace-nowrap font-mono text-[7px] font-bold tracking-[0.14em] text-kiwi-dark">DOCK</span>
+        </div>
+        {DOCK_BAYS.map((bay) => (
           <div
-            key={index}
-            className="absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 border border-gray-500 bg-gray-300"
-            style={{ left: `${sensor.x}%`, top: `${sensor.y}%` }}
-            title="Lidar reference beacon"
+            key={bay.id}
+            className="absolute -translate-x-1/2 -translate-y-1/2 border border-kiwi-dark/25 bg-white/35"
+            style={{ left: `${bay.position.x}%`, top: `${bay.position.y}%`, width: "5.5%", height: "6%" }}
           />
         ))}
-
-        <div
-          className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center border-2 border-dashed border-kiwi-dark/50 bg-kiwi-soft/75"
-          style={{ left: `${DOCK_POSITION.x}%`, top: `${DOCK_POSITION.y}%`, width: "7.5%", height: "35%" }}
-        >
-          <span className="font-mono text-[7px] font-bold tracking-[0.14em] text-kiwi-dark">DOCK BAY</span>
-          <span className="mt-1 font-mono text-[7px] text-kiwi-dark/70">2 / 3</span>
-        </div>
 
         <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
           {movingRobots.map((robot) => {
@@ -121,6 +130,18 @@ export function GarageMap({
               </g>
             );
           })}
+          {chargingConnections.map(({ robot, connection }) => (
+            <line
+              key={`cable-${robot.id}`}
+              x1={robot.position.x}
+              y1={robot.position.y}
+              x2={connection.x}
+              y2={connection.y}
+              stroke="#A7D421"
+              strokeLinecap="round"
+              strokeWidth=".8"
+            />
+          ))}
         </svg>
 
         {spots.map((spot) => (

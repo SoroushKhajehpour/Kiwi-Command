@@ -1,12 +1,20 @@
 import type { Robot } from "@/lib/types";
+import { formatPercent } from "@/lib/format";
 import { ROBOT_STATUS_META, batteryBarColor } from "@/lib/statusMeta";
 
-export function RobotStatusStrip({ robots }: { robots: Robot[] }) {
+export function RobotStatusStrip({
+  robots,
+  onClearFault,
+}: {
+  robots: Robot[];
+  onClearFault: (robotId: string) => void;
+}) {
+  const faultCount = robots.filter((robot) => robot.status === "faulted").length;
   return (
     <section className="flex h-full min-h-0 flex-col border border-border bg-white">
       <div className="flex h-8 shrink-0 items-center justify-between border-b border-border px-3">
         <h2 className="text-[9px] font-bold uppercase tracking-[0.1em]">Fleet units</h2>
-        <span className="text-[8px] text-muted">3 online · 0 faults</span>
+        <span className="text-[8px] text-muted">{robots.length - faultCount} online · {faultCount} faults</span>
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-3">
         {robots.map((robot) => {
@@ -21,11 +29,28 @@ export function RobotStatusStrip({ robots }: { robots: Robot[] }) {
                 <div className="h-1 flex-1 bg-surface">
                   <div className={`h-full ${batteryBarColor(robot.battery)}`} style={{ width: `${robot.battery}%` }} />
                 </div>
-                <span className="font-mono text-[8px] text-muted">{robot.battery}%</span>
+                <span className="font-mono text-[8px] text-muted">{formatPercent(robot.battery)}</span>
               </div>
               <span className="mt-1 truncate text-[8px] text-muted">
-                {robot.assignedVehicleId ? `Job ${robot.assignedVehicleId}` : robot.status === "idle" ? "Dock lane" : "Returning to dock"}
+                {robot.assignedVehicleId
+                  ? `Job ${robot.assignedVehicleId}`
+                  : robot.status === "docked"
+                    ? `Recharging · ${robot.dockBayId}`
+                    : robot.status === "faulted"
+                      ? "Service required"
+                      : robot.status === "idle"
+                        ? "Staged"
+                        : "Returning to dock"}
               </span>
+              {robot.status === "faulted" && (
+                <button
+                  type="button"
+                  onClick={() => onClearFault(robot.id)}
+                  className="mt-1 self-start text-[8px] font-bold text-error hover:underline"
+                >
+                  Clear fault
+                </button>
+              )}
             </div>
           );
         })}

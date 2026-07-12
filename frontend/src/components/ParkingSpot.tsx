@@ -1,6 +1,7 @@
 "use client";
 
 import type { ParkingSpot as ParkingSpotData, Vehicle } from "@/lib/types";
+import { formatPercent } from "@/lib/format";
 import { CarTopView } from "./CarTopView";
 
 interface ParkingSpotProps {
@@ -12,16 +13,13 @@ interface ParkingSpotProps {
 
 /** Battery chip color per vehicle status. */
 function batteryChipClasses(vehicle: Vehicle): string {
-  switch (vehicle.status) {
-    case "waiting":
-      return "bg-amber-50 text-amber-700 border-amber-200";
-    case "charging":
-      return "bg-kiwi/15 text-kiwi-dark border-kiwi/40";
-    case "completed":
-      return "bg-kiwi/10 text-kiwi-dark border-border";
-    default:
-      return "bg-white/90 text-muted border-border";
+  if (vehicle.status === "charging" || vehicle.battery >= 60) {
+    return "border-kiwi/35 bg-white text-kiwi-dark";
   }
+  if (vehicle.battery < 30) {
+    return "border-amber-200 bg-white text-amber-700";
+  }
+  return "border-slate-200 bg-white text-slate-600";
 }
 
 /**
@@ -43,7 +41,7 @@ export function ParkingSpot({ spot, vehicle, isSelected, onSelect }: ParkingSpot
       onClick={() => onSelect(spot.id)}
       className={`group absolute -translate-x-1/2 -translate-y-1/2 rounded-sm transition-colors duration-150
         ${paintedEdges} border-white/80
-        ${isSelected ? "bg-kiwi/20 ring-2 ring-kiwi" : "hover:bg-white/30"}`}
+        ${isSelected ? "bg-kiwi-soft/80 ring-2 ring-kiwi" : "hover:bg-white/30"}`}
       style={{
         left: `${spot.position.x}%`,
         top: `${spot.position.y}%`,
@@ -74,7 +72,7 @@ export function ParkingSpot({ spot, vehicle, isSelected, onSelect }: ParkingSpot
               ${batteryChipClasses(vehicle)}
               ${isTopRow ? "-bottom-2" : "-top-2"}`}
           >
-            {vehicle.battery}%
+            {formatPercent(vehicle.battery)}
           </span>
         </>
       )}

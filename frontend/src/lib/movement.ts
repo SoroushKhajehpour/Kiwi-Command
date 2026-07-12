@@ -1,37 +1,5 @@
-import type { GaragePosition, ParkingSpot, Robot } from "./types";
-
-const LANE_CENTER_Y = 50;
-export const ROBOT_SPEED = 14;
-
-function samePoint(a: GaragePosition, b: GaragePosition): boolean {
-  return Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01;
-}
-
-function uniqueWaypoints(points: GaragePosition[]): GaragePosition[] {
-  return points.filter((point, index) => index === 0 || !samePoint(point, points[index - 1]));
-}
-
-export function servicePosition(spot: ParkingSpot): GaragePosition {
-  return { x: spot.position.x, y: spot.rotation === 0 ? 27 : 73 };
-}
-
-/** Route via the center driving lane so robots never cut through parked cars. */
-export function buildServiceRoute(from: GaragePosition, spot: ParkingSpot): GaragePosition[] {
-  const target = servicePosition(spot);
-  return uniqueWaypoints([
-    { x: from.x, y: LANE_CENTER_Y },
-    { x: target.x, y: LANE_CENTER_Y },
-    target,
-  ]).filter((point) => !samePoint(point, from));
-}
-
-export function buildDockRoute(from: GaragePosition, dock: GaragePosition): GaragePosition[] {
-  return uniqueWaypoints([
-    { x: from.x, y: LANE_CENTER_Y },
-    { x: dock.x, y: LANE_CENTER_Y },
-    dock,
-  ]).filter((point) => !samePoint(point, from));
-}
+import { calculateRouteDistance, DEMO_ROBOT_MAP_UNITS_PER_SECOND } from "./routes";
+import type { GaragePosition, Robot } from "./types";
 
 export function headingTo(from: GaragePosition, to: GaragePosition): number {
   const degrees = Math.atan2(to.x - from.x, -(to.y - from.y)) * (180 / Math.PI);
@@ -39,13 +7,7 @@ export function headingTo(from: GaragePosition, to: GaragePosition): number {
 }
 
 export function routeDistance(robot: Robot): number {
-  const remaining = robot.route.slice(robot.routeIndex);
-  let from = robot.position;
-  return remaining.reduce((total, point) => {
-    const distance = Math.hypot(point.x - from.x, point.y - from.y);
-    from = point;
-    return total + distance;
-  }, 0);
+  return calculateRouteDistance(robot.position, robot.route, robot.routeIndex);
 }
 
 export function advanceRobot(robot: Robot, elapsedSeconds: number): { robot: Robot; arrived: boolean } {
@@ -53,7 +15,7 @@ export function advanceRobot(robot: Robot, elapsedSeconds: number): { robot: Rob
 
   let position = robot.position;
   let routeIndex = robot.routeIndex;
-  let distanceBudget = ROBOT_SPEED * elapsedSeconds;
+  let distanceBudget = DEMO_ROBOT_MAP_UNITS_PER_SECOND * elapsedSeconds;
   let heading = robot.heading;
 
   while (distanceBudget > 0 && routeIndex < robot.route.length) {

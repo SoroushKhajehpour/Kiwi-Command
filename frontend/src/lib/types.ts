@@ -22,6 +22,11 @@ export interface Robot {
   status: RobotStatus;
   battery: number;
   position: GaragePosition;
+  targetPosition: GaragePosition | null;
+  route: GaragePosition[];
+  routeIndex: number;
+  /** Compass-like heading in degrees; 0 points up, 90 points right. */
+  heading: number;
   /** Vehicle this robot is currently serving, if any. */
   assignedVehicleId: string | null;
 }

@@ -2,14 +2,15 @@
 
 :root {
   --background: #ffffff;
-  --surface: #f7f8f5;
-  --foreground: #171717;
+  --surface: #f8faf5;
+  --foreground: #111111;
   --muted: #6b7280;
   --border: #e5e7eb;
-  --kiwi: #a8cf2d;
-  --kiwi-dark: #5d7f19;
-  --warning: #d97706;
-  --error: #b91c1c;
+  --kiwi: #a7d421;
+  --kiwi-dark: #5e7f0e;
+  --kiwi-soft: #f3f9df;
+  --warning: #f59e0b;
+  --error: #ef4444;
 }
 
 @theme inline {
@@ -20,14 +21,38 @@
   --color-border: var(--border);
   --color-kiwi: var(--kiwi);
   --color-kiwi-dark: var(--kiwi-dark);
+  --color-kiwi-soft: var(--kiwi-soft);
   --color-warning: var(--warning);
   --color-error: var(--error);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+html,
 body {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
   background: var(--surface);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+button,
+a {
+  outline-color: var(--kiwi-dark);
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--kiwi-dark);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1023px), (max-height: 760px) {
+  body {
+    overflow: auto;
+  }
 }

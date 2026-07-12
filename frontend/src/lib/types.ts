@@ -6,7 +6,7 @@
 
 export type RobotStatus = "idle" | "en-route" | "charging" | "returning";
 
-export type VehicleStatus = "parked" | "waiting" | "charging" | "completed";
+export type VehicleStatus = "parked" | "waiting" | "assigned" | "charging" | "completed";
 
 export type SessionStatus = "queued" | "active" | "completed";
 
@@ -35,6 +35,8 @@ export interface Vehicle {
   battery: number;
   status: VehicleStatus;
   assignedRobotId: string | null;
+  requestedEnergyKwh: number | null;
+  priority: "Normal" | "Urgent";
 }
 
 export interface ParkingSpot {
@@ -55,4 +57,18 @@ export interface ChargingSession {
   energyKwh: number;
   /** Human-readable start time, e.g. "14:05". */
   startedAt: string;
+}
+
+export interface FleetMetric {
+  id: string;
+  label: string;
+  value: string;
+  detail?: string;
+}
+
+export interface EventLogItem {
+  id: string;
+  message: string;
+  timestamp: string;
+  type: "dispatch" | "request" | "charging" | "returning";
 }

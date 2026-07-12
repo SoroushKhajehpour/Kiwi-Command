@@ -51,6 +51,7 @@ export function ParkingSpot({ spot, vehicle, isSelected, onSelect }: ParkingSpot
         height: "27%",
       }}
       aria-label={`Parking spot ${spot.label}${vehicle ? `, occupied by ${vehicle.id}` : ", empty"}`}
+      aria-pressed={isSelected}
     >
       {/* Spot label, painted at the outer (wall-side) edge */}
       <span

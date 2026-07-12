@@ -13,6 +13,7 @@ export const ROBOT_STATUS_META: Record<RobotStatus, { label: string; tone: PillT
 export const VEHICLE_STATUS_META: Record<VehicleStatus, { label: string; tone: PillTone; pulse?: boolean }> = {
   parked: { label: "Parked", tone: "neutral" },
   waiting: { label: "Waiting for charge", tone: "amber" },
+  assigned: { label: "Robot assigned", tone: "kiwi", pulse: true },
   charging: { label: "Charging", tone: "kiwi", pulse: true },
   completed: { label: "Charge complete", tone: "kiwi" },
 };

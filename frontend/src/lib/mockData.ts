@@ -16,7 +16,6 @@ import type {
 export const GARAGE_NAME = "Lakeshore West Garage";
 export const GARAGE_LEVEL = "Level P2";
 
-/** Where robots park and recharge between jobs. */
 export const DOCK_POSITION: GaragePosition = { x: 5, y: 50 };
 
 export const DOCK_BAYS: DockBay[] = [
@@ -25,7 +24,6 @@ export const DOCK_BAYS: DockBay[] = [
   { id: "dock-3", position: { x: 5.5, y: 58 } },
 ];
 
-/** Structural concrete columns drawn on the garage floor. */
 export const COLUMN_POSITIONS: GaragePosition[] = [
   { x: 31.5, y: 33 },
   { x: 58.5, y: 33 },
@@ -35,43 +33,51 @@ export const COLUMN_POSITIONS: GaragePosition[] = [
   { x: 85.5, y: 67 },
 ];
 
-export const INITIAL_VEHICLES: Vehicle[] = [
-  { id: "EV-4712", spotId: "P2-15", model: "Polestar 2", paint: "white", battery: 76, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
-  { id: "EV-4821", spotId: "P2-18", model: "Hyundai IONIQ 5", paint: "charcoal", battery: 18, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 28, priority: "Urgent" },
-  { id: "EV-2054", spotId: "P2-20", model: "Tesla Model 3", paint: "black", battery: 64, status: "charging", assignedRobotId: "R-02", requestedEnergyKwh: 24, priority: "Normal" },
-  { id: "EV-7391", spotId: "P2-22", model: "Kia EV6", paint: "white", battery: 92, status: "completed", assignedRobotId: null, requestedEnergyKwh: 18.8, priority: "Normal" },
-  { id: "EV-3568", spotId: "A2", model: "Ford Mustang Mach-E", paint: "silver", battery: 41, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
-  { id: "EV-4466", spotId: "A5", model: "Nissan Ariya", paint: "silver", battery: 29, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 22, priority: "Normal" },
-  { id: "EV-1730", spotId: "A8", model: "Tesla Model Y", paint: "blue", battery: 67, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal" },
-];
-
-/**
- * Two rows of spots facing a central driving lane.
- * Top row (P2-xx) noses point up; bottom row (A-x) noses point down.
- */
 const topRowX = [18, 27, 36, 45, 54, 63, 72, 81, 90];
 const bottomRowX = topRowX;
+
+function makeSpot(
+  id: string,
+  position: GaragePosition,
+  rotation: number,
+  row: "top" | "bottom",
+  vehicleId: string | null,
+): ParkingSpot {
+  return {
+    id,
+    label: id,
+    position,
+    rotation,
+    row,
+    servicePoint: {
+      x: position.x + 3,
+      y: rotation === 0 ? 28 : 72,
+    },
+    vehicleId,
+    occupiedVehicleId: vehicleId,
+  };
+}
+
+export const INITIAL_VEHICLES: Vehicle[] = [
+  { id: "EV-4712", spotId: "P2-15", model: "Polestar 2", paint: "white", battery: 76, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal", position: { x: 18, y: 16 }, targetBattery: 80, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 120 },
+  { id: "EV-4821", spotId: "P2-18", model: "Hyundai IONIQ 5", paint: "charcoal", battery: 18, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 28, priority: "Urgent", position: { x: 45, y: 16 }, targetBattery: 75, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 80 },
+  { id: "EV-2054", spotId: "P2-20", model: "Tesla Model 3", paint: "black", battery: 64, status: "charging", assignedRobotId: "R-02", requestedEnergyKwh: 24, priority: "Normal", position: { x: 54, y: 16 }, targetBattery: 85, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 100 },
+  { id: "EV-7391", spotId: "P2-22", model: "Kia EV6", paint: "white", battery: 92, status: "completed", assignedRobotId: null, requestedEnergyKwh: 18.8, priority: "Normal", position: { x: 72, y: 16 }, targetBattery: 90, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 60 },
+  { id: "EV-3568", spotId: "A2", model: "Ford Mustang Mach-E", paint: "silver", battery: 41, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal", position: { x: 27, y: 84 }, targetBattery: 80, route: [], routeIndex: 0, heading: 180, arrivalTick: 0, expectedDepartureTick: 140 },
+  { id: "EV-4466", spotId: "A5", model: "Nissan Ariya", paint: "silver", battery: 29, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 22, priority: "Normal", position: { x: 54, y: 84 }, targetBattery: 75, route: [], routeIndex: 0, heading: 180, arrivalTick: 0, expectedDepartureTick: 90 },
+  { id: "EV-1730", spotId: "A8", model: "Tesla Model Y", paint: "blue", battery: 67, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal", position: { x: 81, y: 84 }, targetBattery: 85, route: [], routeIndex: 0, heading: 180, arrivalTick: 0, expectedDepartureTick: 150 },
+];
 
 export const PARKING_SPOTS: ParkingSpot[] = [
   ...topRowX.map((x, i) => {
     const label = `P2-${14 + i}`;
-    return {
-      id: label,
-      label,
-      position: { x, y: 16 },
-      rotation: 0,
-      vehicleId: INITIAL_VEHICLES.find((v) => v.spotId === label)?.id ?? null,
-    };
+    const vehicleId = INITIAL_VEHICLES.find((v) => v.spotId === label)?.id ?? null;
+    return makeSpot(label, { x, y: 16 }, 0, "top", vehicleId);
   }),
   ...bottomRowX.map((x, i) => {
     const label = `A${i + 1}`;
-    return {
-      id: label,
-      label,
-      position: { x, y: 84 },
-      rotation: 180,
-      vehicleId: INITIAL_VEHICLES.find((v) => v.spotId === label)?.id ?? null,
-    };
+    const vehicleId = INITIAL_VEHICLES.find((v) => v.spotId === label)?.id ?? null;
+    return makeSpot(label, { x, y: 84 }, 180, "bottom", vehicleId);
   }),
 ];
 
@@ -103,6 +109,7 @@ export const INITIAL_ROBOTS: Robot[] = [
     dockBayId: null,
     assignedVehicleId: "EV-2054",
     faultType: null,
+    motionState: "charging",
   },
   {
     id: "R-03",
@@ -117,6 +124,7 @@ export const INITIAL_ROBOTS: Robot[] = [
     dockBayId: "dock-2",
     assignedVehicleId: null,
     faultType: null,
+    motionState: "moving",
   },
 ];
 
@@ -131,6 +139,9 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
     requestedKwh: 22,
     etaSeconds: null,
     startedAt: "15:48",
+    priorityScore: 70,
+    chargeRateKw: 7,
+    createdTick: 0,
   },
   {
     id: "S-1044",
@@ -142,6 +153,9 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
     requestedKwh: 28,
     etaSeconds: null,
     startedAt: "15:42",
+    priorityScore: 120,
+    chargeRateKw: 7,
+    createdTick: 0,
   },
   {
     id: "S-1043",
@@ -153,6 +167,10 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
     requestedKwh: 24,
     etaSeconds: null,
     startedAt: "15:07",
+    priorityScore: 50,
+    chargeRateKw: 7,
+    createdTick: 0,
+    startedTick: 5,
   },
   {
     id: "S-1039",
@@ -164,10 +182,13 @@ export const INITIAL_SESSIONS: ChargingSession[] = [
     requestedKwh: 18.8,
     etaSeconds: null,
     startedAt: "13:22",
+    priorityScore: 50,
+    chargeRateKw: 7,
+    createdTick: 0,
+    completedTick: 40,
   },
 ];
 
-/** Running total for the "Energy delivered today" metric card. */
 export const ENERGY_DELIVERED_TODAY_KWH = 148.6;
 
 export const INITIAL_EVENTS: EventLogItem[] = [
@@ -175,3 +196,61 @@ export const INITIAL_EVENTS: EventLogItem[] = [
   { id: "E-101", message: "R-03 returned to dock", timestamp: "01:02", type: "returning" },
   { id: "E-103", message: "R-02 charging EV-2054", timestamp: "00:58", type: "charging" },
 ];
+
+/** Empty garage baseline for autonomous demo — 3 docked robots only. */
+export function createEmptyGarageSpots(): ParkingSpot[] {
+  return [
+    ...topRowX.map((x, i) => makeSpot(`P2-${14 + i}`, { x, y: 16 }, 0, "top", null)),
+    ...bottomRowX.map((x, i) => makeSpot(`A${i + 1}`, { x, y: 84 }, 180, "bottom", null)),
+  ];
+}
+
+export function createDemoFleetRobots(): Robot[] {
+  return [
+    {
+      id: "R-01",
+      name: "R-01",
+      status: "docked",
+      battery: 82,
+      position: { ...DOCK_BAYS[0].position },
+      targetPosition: null,
+      route: [],
+      routeIndex: 0,
+      heading: 0,
+      dockBayId: "dock-1",
+      assignedVehicleId: null,
+      faultType: null,
+      motionState: "docked",
+    },
+    {
+      id: "R-02",
+      name: "R-02",
+      status: "docked",
+      battery: 78,
+      position: { ...DOCK_BAYS[1].position },
+      targetPosition: null,
+      route: [],
+      routeIndex: 0,
+      heading: 0,
+      dockBayId: "dock-2",
+      assignedVehicleId: null,
+      faultType: null,
+      motionState: "docked",
+    },
+    {
+      id: "R-03",
+      name: "R-03",
+      status: "docked",
+      battery: 91,
+      position: { ...DOCK_BAYS[2].position },
+      targetPosition: null,
+      route: [],
+      routeIndex: 0,
+      heading: 0,
+      dockBayId: "dock-3",
+      assignedVehicleId: null,
+      faultType: null,
+      motionState: "docked",
+    },
+  ];
+}

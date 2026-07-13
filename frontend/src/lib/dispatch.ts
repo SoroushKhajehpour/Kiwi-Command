@@ -75,6 +75,7 @@ export function selectBestRobot(
   dockBays: DockBay[],
   options: DispatchOptions = {},
 ): DispatchDecision | null {
+  if (!vehicle.spotId) return null;
   const spot = spots.find((item) => item.id === vehicle.spotId);
   if (!spot) return null;
 

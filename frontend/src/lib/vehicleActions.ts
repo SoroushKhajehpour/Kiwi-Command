@@ -102,11 +102,12 @@ export function getSelectedVehicleAction(
         actionType: "backup",
       };
     case "assigned":
+    case "en_route":
       return {
-        label: "Simulate Robot Fault",
-        variant: "danger",
-        disabled: !(assignedRobot?.status === "en-route" || assignedRobot?.status === "charging"),
-        actionType: "fault",
+        label: "Job In Progress",
+        variant: "disabled",
+        disabled: true,
+        actionType: "none",
       };
     case "charging":
       return {

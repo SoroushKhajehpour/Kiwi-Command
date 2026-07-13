@@ -16,6 +16,7 @@ export function deriveOperationsMetrics(
   events: EventLogItem[],
   energyToday: number,
   dockBays: DockBay[],
+  missedCount = 0,
 ): DerivedOperationsMetrics {
   const available = robots.filter((robot) => (
     (robot.status === "idle" || robot.status === "docked")
@@ -38,6 +39,7 @@ export function deriveOperationsMetrics(
   const busyRobots = healthyRobots.filter((robot) => robot.status !== "idle" && robot.status !== "docked");
   const utilization = healthyRobots.length > 0 ? busyRobots.length / healthyRobots.length * 100 : 0;
   const dockOccupancy = Math.min(dockBays.length, robots.filter((robot) => robot.dockBayId).length);
+  const carsInGarage = vehicles.filter((v) => v.status !== "departed").length;
 
   return {
     commandBar: [
@@ -47,6 +49,8 @@ export function deriveOperationsMetrics(
       { id: "queue", label: "Queue depth", value: `${queueDepth}` },
       { id: "energy", label: "Energy today", value: formatKwh(energyToday) },
       { id: "eta", label: "Avg ETA", value: formatEta(averageEta) },
+      { id: "cars", label: "Cars in garage", value: `${carsInGarage}` },
+      { id: "missed", label: "Missed", value: missedCount > 0 ? `${missedCount}` : "—" },
     ],
     dockOccupancy,
     faultsToday,

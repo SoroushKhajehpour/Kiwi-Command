@@ -1,9 +1,7 @@
-"use client";
-
 import { Activity } from "lucide-react";
 import { COLUMN_POSITIONS, DOCK_BAYS, GARAGE_LEVEL, GARAGE_NAME } from "@/lib/mockData";
 import { getVehicleConnectionPoint, LANE_BLOCK_ZONE } from "@/lib/routes";
-import type { FleetMetric, ParkingSpot, Robot, Vehicle } from "@/lib/types";
+import type { DemoMode, FleetMetric, ParkingSpot, Robot, Vehicle } from "@/lib/types";
 import { RobotMarker } from "./RobotMarker";
 import { VehicleMarker } from "./VehicleMarker";
 
@@ -14,6 +12,7 @@ interface GarageMapProps {
   metrics: FleetMetric[];
   selectedSpotId: string | null;
   autoDispatch: boolean;
+  demoMode: DemoMode;
   dockOccupancy: number;
   laneBlocked?: boolean;
   onSelectSpot: (spotId: string) => void;
@@ -39,19 +38,29 @@ export function GarageMap({
   metrics,
   selectedSpotId,
   autoDispatch,
+  demoMode,
   dockOccupancy,
   laneBlocked = false,
   onSelectSpot,
 }: GarageMapProps) {
   const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
+  const parkedVehicles = vehicles.filter((v) => (
+    v.spotId && !["entering", "leaving", "departed"].includes(v.status)
+  ));
+  const movingVehicles = vehicles.filter((v) => (
+    v.status === "entering" || v.status === "parking" || v.status === "leaving"
+  ));
   const movingRobots = robots.filter((robot) => robot.routeIndex < robot.route.length);
   const spotById = new Map(spots.map((spot) => [spot.id, spot]));
+
   const chargingConnections = robots.flatMap((robot) => {
     if (robot.status !== "charging" || !robot.assignedVehicleId) return [];
     const vehicle = vehicleById.get(robot.assignedVehicleId);
-    const spot = vehicle ? spotById.get(vehicle.spotId) : undefined;
+    const spot = vehicle?.spotId ? spotById.get(vehicle.spotId) : undefined;
     return spot ? [{ robot, connection: getVehicleConnectionPoint(spot) }] : [];
   });
+
+  const metricCols = Math.min(8, Math.max(6, metrics.length));
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden border border-border bg-white">
@@ -62,14 +71,22 @@ export function GarageMap({
           <span className="font-mono text-[9px] text-muted">{GARAGE_LEVEL}</span>
         </div>
         <div className="flex items-center gap-4 text-[9px] text-muted">
-          <span>Network <strong className="font-semibold text-kiwi-dark">Simulation live</strong></span>
+          <span>
+            Network{" "}
+            <strong className="font-semibold text-kiwi-dark">
+              {demoMode !== "idle" ? "Demo live" : "Simulation live"}
+            </strong>
+          </span>
           <span>Dock <strong className="font-semibold text-foreground">{dockOccupancy}/{DOCK_BAYS.length}</strong></span>
           <span>Mode <strong className="font-semibold text-foreground">{autoDispatch ? "AUTO" : "MANUAL"}</strong></span>
           {laneBlocked && <span className="font-semibold text-error">Lane blocked</span>}
         </div>
       </div>
 
-      <div className="grid h-12 shrink-0 grid-cols-6 border-b border-border bg-[#fbfcfa]">
+      <div
+        className="grid h-12 shrink-0 border-b border-border bg-[#fbfcfa]"
+        style={{ gridTemplateColumns: `repeat(${metricCols}, minmax(0, 1fr))` }}
+      >
         {metrics.map((metric) => (
           <div key={metric.id} className="flex min-w-0 flex-col justify-center border-r border-border px-3 last:border-r-0">
             <span className="truncate text-[8px] font-semibold uppercase tracking-[0.08em] text-muted">{metric.label}</span>
@@ -143,9 +160,20 @@ export function GarageMap({
               .map((point) => `${point.x},${point.y}`)
               .join(" ");
             return (
-              <g key={`${robot.id}-${robot.assignedVehicleId}`}>
+              <g key={`route-${robot.id}`}>
                 <polyline points={points} fill="none" stroke="#A7D421" strokeOpacity=".18" strokeWidth="2.4" strokeLinejoin="round" />
                 <polyline points={points} fill="none" stroke="#5E7F0E" strokeDasharray="1.8 1.5" strokeWidth=".55" strokeLinejoin="round" />
+              </g>
+            );
+          })}
+          {movingVehicles.map((vehicle) => {
+            const points = [vehicle.position, ...vehicle.route.slice(vehicle.routeIndex)]
+              .map((point) => `${point.x},${point.y}`)
+              .join(" ");
+            return (
+              <g key={`vroute-${vehicle.id}`}>
+                <polyline points={points} fill="none" stroke="#94a3b8" strokeOpacity=".2" strokeWidth="1.8" strokeLinejoin="round" />
+                <polyline points={points} fill="none" stroke="#64748b" strokeDasharray="1.5 1.2" strokeWidth=".4" strokeLinejoin="round" />
               </g>
             );
           })}
@@ -163,14 +191,30 @@ export function GarageMap({
           ))}
         </svg>
 
-        {spots.map((spot) => (
-          <VehicleMarker
-            key={spot.id}
-            spot={spot}
-            vehicle={spot.vehicleId ? vehicleById.get(spot.vehicleId) ?? null : null}
-            selected={spot.id === selectedSpotId}
-            onSelect={onSelectSpot}
-          />
+        {spots.map((spot) => {
+          const vehicle = spot.vehicleId ? vehicleById.get(spot.vehicleId) ?? null : null;
+          const showParked = vehicle && parkedVehicles.some((v) => v.id === vehicle.id);
+          return (
+            <VehicleMarker
+              key={spot.id}
+              spot={spot}
+              vehicle={showParked ? vehicle : null}
+              selected={spot.id === selectedSpotId}
+              onSelect={onSelectSpot}
+            />
+          );
+        })}
+
+        {movingVehicles.map((vehicle) => (
+          <div
+            key={vehicle.id}
+            className="absolute z-25 -translate-x-1/2 -translate-y-1/2"
+            style={{ left: `${vehicle.position.x}%`, top: `${vehicle.position.y}%` }}
+          >
+            <span className="rounded bg-white/90 px-1 py-0.5 font-mono text-[7px] font-bold shadow-sm">
+              {vehicle.id}
+            </span>
+          </div>
         ))}
 
         {robots.map((robot) => <RobotMarker key={robot.id} robot={robot} />)}

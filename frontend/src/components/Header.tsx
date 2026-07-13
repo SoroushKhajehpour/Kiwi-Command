@@ -1,18 +1,23 @@
 "use client";
 
 import Image from "next/image";
+import type { DemoMode } from "@/lib/types";
+import { SIMULATION_TIME_SCALE } from "@/lib/ops/constants";
 
 interface HeaderProps {
   autoDispatch: boolean;
-  onToggleDispatchMode: () => void;
-  demoRunning: boolean;
+  demoMode: DemoMode;
   laneBlocked: boolean;
   canSimulateFault: boolean;
   primaryDisabled: boolean;
   primaryLabel: string;
   activeJobCount: number;
   onRunDemo: () => void;
+  onPauseDemo: () => void;
+  onResumeDemo: () => void;
+  onEndDemo: () => void;
   onResetScenario: () => void;
+  onToggleDispatchMode: () => void;
   onPrimaryAction: () => void;
   onSimulateFault: () => void;
   onToggleLaneBlock: () => void;
@@ -20,21 +25,48 @@ interface HeaderProps {
 
 export function Header({
   autoDispatch,
-  onToggleDispatchMode,
-  demoRunning,
+  demoMode,
   laneBlocked,
   canSimulateFault,
   primaryDisabled,
   primaryLabel,
   activeJobCount,
   onRunDemo,
+  onPauseDemo,
+  onResumeDemo,
+  onEndDemo,
   onResetScenario,
+  onToggleDispatchMode,
   onPrimaryAction,
   onSimulateFault,
   onToggleLaneBlock,
 }: HeaderProps) {
   const ctrl =
     "rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.04em] text-muted transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
+
+  const isDemoActive = demoMode !== "idle";
+  const isRunning = demoMode === "running";
+  const isPaused = demoMode === "paused";
+
+  const statusLabel = isRunning
+    ? "DEMO RUNNING"
+    : isPaused
+      ? "PAUSED"
+      : demoMode === "ended"
+        ? "ENDED"
+        : "LIVE";
+
+  const abbrevPrimary = primaryLabel === "Request New Charge"
+    ? "New Charge"
+    : primaryLabel === "Send Backup Robot"
+      ? "Backup"
+      : primaryLabel === "Dispatch Robot"
+        ? "Dispatch"
+        : primaryLabel === "Simulate Robot Fault"
+          ? "Fault Job"
+          : primaryLabel === "Job In Progress"
+            ? "In Progress"
+            : "Request";
 
   return (
     <header className="shrink-0 border-b border-border bg-white">
@@ -50,47 +82,76 @@ export function Header({
           />
           <div className="leading-tight">
             <h1 className="text-[18px] font-bold tracking-[-0.03em]">Kiwi Command</h1>
-            <p className="mt-0.5 text-[11px] font-medium text-muted">Mobile EV Charging Operations</p>
+            <p className="mt-0.5 text-[11px] font-medium text-muted">
+              Mobile EV Charging Operations
+              {isDemoActive && (
+                <span className="ml-2 font-mono text-[9px] text-kiwi-dark">Demo {SIMULATION_TIME_SCALE}x</span>
+              )}
+            </p>
           </div>
         </div>
 
         <div className="hidden items-center gap-2 justify-self-center md:flex">
           <span className="mr-1 flex items-center gap-1.5 text-[10px] font-semibold text-kiwi-dark">
-            <span className="h-1.5 w-1.5 rounded-full bg-kiwi-dark" />
-            LIVE
+            <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? "animate-pulse bg-kiwi-dark" : "bg-kiwi-dark"}`} />
+            {statusLabel}
           </span>
-          <button
-            type="button"
-            onClick={onToggleDispatchMode}
-            className={ctrl}
-            aria-label={`Switch to ${autoDispatch ? "manual" : "automatic"} dispatch`}
-          >
-            {autoDispatch ? "AUTO" : "MANUAL"}
-          </button>
-          <span className="text-border">|</span>
-          <button type="button" onClick={onRunDemo} disabled={demoRunning} className={`${ctrl} text-kiwi-dark`}>
-            {demoRunning ? "Running…" : "Run Demo"}
-          </button>
-          <button
-            type="button"
-            onClick={onPrimaryAction}
-            disabled={primaryDisabled || demoRunning}
-            className={ctrl}
-            title={primaryLabel}
-          >
-            {primaryLabel === "Request New Charge" ? "New Charge" : primaryLabel === "Send Backup Robot" ? "Backup" : primaryLabel === "Dispatch Robot" ? "Dispatch" : primaryLabel === "Simulate Robot Fault" ? "Fault Job" : "Request"}
-          </button>
-          <button type="button" onClick={onSimulateFault} disabled={!canSimulateFault || demoRunning} className={ctrl}>
-            Fault
-          </button>
-          <button
-            type="button"
-            onClick={onToggleLaneBlock}
-            disabled={demoRunning}
-            className={`${ctrl} ${laneBlocked ? "bg-red-50 text-error" : ""}`}
-          >
-            {laneBlocked ? "Unblock" : "Block Lane"}
-          </button>
+          {!isDemoActive && (
+            <>
+              <button
+                type="button"
+                onClick={onToggleDispatchMode}
+                className={ctrl}
+                aria-label={`Switch to ${autoDispatch ? "manual" : "automatic"} dispatch`}
+              >
+                {autoDispatch ? "AUTO" : "MANUAL"}
+              </button>
+              <span className="text-border">|</span>
+            </>
+          )}
+          {!isDemoActive && (
+            <button type="button" onClick={onRunDemo} className={`${ctrl} text-kiwi-dark`}>
+              Run Demo
+            </button>
+          )}
+          {isRunning && (
+            <button type="button" onClick={onPauseDemo} className={ctrl}>
+              Pause
+            </button>
+          )}
+          {isPaused && (
+            <button type="button" onClick={onResumeDemo} className={`${ctrl} text-kiwi-dark`}>
+              Resume
+            </button>
+          )}
+          {(isRunning || isPaused) && (
+            <button type="button" onClick={onEndDemo} className={ctrl}>
+              End Demo
+            </button>
+          )}
+          {!isDemoActive && (
+            <>
+              <button
+                type="button"
+                onClick={onPrimaryAction}
+                disabled={primaryDisabled}
+                className={ctrl}
+                title={primaryLabel}
+              >
+                {abbrevPrimary}
+              </button>
+              <button type="button" onClick={onSimulateFault} disabled={!canSimulateFault} className={ctrl}>
+                Fault
+              </button>
+              <button
+                type="button"
+                onClick={onToggleLaneBlock}
+                className={`${ctrl} ${laneBlocked ? "bg-red-50 text-error" : ""}`}
+              >
+                {laneBlocked ? "Unblock" : "Block Lane"}
+              </button>
+            </>
+          )}
           <button type="button" onClick={onResetScenario} className={ctrl}>
             Reset
           </button>
@@ -100,7 +161,9 @@ export function Header({
           <p className="font-mono text-[10px] font-bold text-foreground">
             {activeJobCount} active job{activeJobCount === 1 ? "" : "s"}
           </p>
-          <p className="text-[9px] text-muted">Selected action in job panel</p>
+          <p className="text-[9px] text-muted">
+            {isDemoActive ? "Autonomous simulation" : "Selected action in job panel"}
+          </p>
         </div>
       </div>
     </header>

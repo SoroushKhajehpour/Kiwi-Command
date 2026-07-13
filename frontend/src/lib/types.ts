@@ -4,15 +4,33 @@
  * so swapping mock data for API responses should be low-friction.
  */
 
-export type RobotStatus = "idle" | "docked" | "en-route" | "charging" | "returning" | "faulted";
+export type DemoMode = "idle" | "running" | "paused" | "ended";
+
+export type RobotStatus =
+  | "idle"
+  | "docked"
+  | "en-route"
+  | "charging"
+  | "returning"
+  | "faulted"
+  | "yielding";
+
+export type RobotMotionState = "moving" | "yielding" | "docked" | "charging";
 
 export type VehicleStatus =
+  | "entering"
+  | "parking"
   | "parked"
   | "waiting"
   | "assigned"
+  | "en_route"
   | "charging"
   | "completed"
+  | "leaving"
+  | "departed"
   | "backup-needed";
+
+export type VehiclePriority = "Low" | "Normal" | "Urgent";
 
 export type SessionStatus =
   | "queued"
@@ -21,7 +39,8 @@ export type SessionStatus =
   | "active"
   | "completed"
   | "interrupted"
-  | "cancelled";
+  | "cancelled"
+  | "missed";
 
 export type VehiclePaint = "white" | "black" | "charcoal" | "silver" | "blue" | "green";
 
@@ -53,18 +72,28 @@ export interface Robot {
   /** Vehicle this robot is currently serving, if any. */
   assignedVehicleId: string | null;
   faultType: FaultType | null;
+  motionState?: RobotMotionState;
+  lastYieldTick?: number;
 }
 
 export interface Vehicle {
   id: string;
-  spotId: string;
+  spotId: string | null;
   model: string;
   paint: VehiclePaint;
   battery: number;
   status: VehicleStatus;
   assignedRobotId: string | null;
   requestedEnergyKwh: number | null;
-  priority: "Normal" | "Urgent";
+  priority: VehiclePriority;
+  position: GaragePosition;
+  targetBattery: number;
+  route: GaragePosition[];
+  routeIndex: number;
+  heading: number;
+  arrivalTick: number;
+  expectedDepartureTick: number;
+  completedAtTick?: number;
 }
 
 export interface ParkingSpot {
@@ -73,7 +102,10 @@ export interface ParkingSpot {
   position: GaragePosition;
   /** Degrees. 0 = car nose pointing up; 180 = nose pointing down. */
   rotation: number;
+  row: "top" | "bottom";
+  servicePoint: GaragePosition;
   vehicleId: string | null;
+  occupiedVehicleId: string | null;
 }
 
 export interface ChargingSession {
@@ -87,6 +119,11 @@ export interface ChargingSession {
   etaSeconds: number | null;
   /** Human-readable start time, e.g. "14:05". */
   startedAt: string;
+  priorityScore: number;
+  chargeRateKw: number;
+  createdTick: number;
+  startedTick?: number;
+  completedTick?: number;
 }
 
 export interface FleetMetric {
@@ -96,14 +133,35 @@ export interface FleetMetric {
   detail?: string;
 }
 
+export type EventLogType =
+  | "dispatch"
+  | "request"
+  | "charging"
+  | "returning"
+  | "dock"
+  | "fault"
+  | "reassignment"
+  | "arrival"
+  | "departure"
+  | "prioritized"
+  | "yield"
+  | "missed";
+
 export interface EventLogItem {
   id: string;
   message: string;
   timestamp: string;
-  type: "dispatch" | "request" | "charging" | "returning" | "dock" | "fault" | "reassignment";
+  type: EventLogType;
 }
 
 export interface DockBay {
   id: string;
   position: GaragePosition;
+}
+
+export interface JobPriorityExplanation {
+  vehicleId: string;
+  spotId: string;
+  priorityScore: number;
+  reasons: string[];
 }

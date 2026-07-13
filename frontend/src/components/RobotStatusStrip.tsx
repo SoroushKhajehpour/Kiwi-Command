@@ -19,11 +19,18 @@ export function RobotStatusStrip({
       <div className="grid min-h-0 flex-1 grid-cols-3">
         {robots.map((robot) => {
           const meta = ROBOT_STATUS_META[robot.status];
+          const motionLabel = robot.motionState === "yielding"
+            ? "Yielding"
+            : robot.motionState === "moving"
+              ? "Moving"
+              : null;
           return (
             <div key={robot.id} className="flex min-w-0 flex-col justify-center border-r border-border px-3 last:border-r-0">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-[10px] font-bold">{robot.name}</span>
-                <span className="truncate text-[8px] font-medium text-muted">{meta.label}</span>
+                <span className="truncate text-[8px] font-medium text-muted">
+                  {motionLabel ?? meta.label}
+                </span>
               </div>
               <div className="mt-1.5 flex items-center gap-2">
                 <div className="h-1 flex-1 bg-surface">
@@ -39,7 +46,7 @@ export function RobotStatusStrip({
                     : robot.status === "faulted"
                       ? "Service required"
                       : robot.status === "idle"
-                        ? "Staged"
+                        ? `Staged · ${robot.dockBayId ?? "—"}`
                         : "Returning to dock"}
               </span>
               {robot.status === "faulted" && (

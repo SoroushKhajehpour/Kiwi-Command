@@ -89,7 +89,7 @@ export function SelectedJobPanel({
         </div>
 
         <div className="px-4">
-          <DataRow label="Location" value={<span className="inline-flex items-center gap-1 font-mono"><MapPin className="h-3 w-3 text-muted" />{vehicle.spotId}</span>} />
+          <DataRow label="Location" value={<span className="inline-flex items-center gap-1 font-mono"><MapPin className="h-3 w-3 text-muted" />{vehicle.spotId ?? "In transit"}</span>} />
           <DataRow
             label="Requested"
             value={

@@ -16,21 +16,12 @@ import type {
 export const GARAGE_NAME = "Lakeshore West Garage";
 export const GARAGE_LEVEL = "Level P2";
 
-export const DOCK_POSITION: GaragePosition = { x: 5, y: 50 };
+export const DOCK_POSITION: GaragePosition = { x: 7, y: 16 };
 
 export const DOCK_BAYS: DockBay[] = [
-  { id: "dock-1", position: { x: 5.5, y: 42 } },
-  { id: "dock-2", position: { x: 5.5, y: 50 } },
-  { id: "dock-3", position: { x: 5.5, y: 58 } },
-];
-
-export const COLUMN_POSITIONS: GaragePosition[] = [
-  { x: 31.5, y: 33 },
-  { x: 58.5, y: 33 },
-  { x: 85.5, y: 33 },
-  { x: 31.5, y: 67 },
-  { x: 58.5, y: 67 },
-  { x: 85.5, y: 67 },
+  { id: "dock-A", position: { x: 7, y: 16 }, label: "A", orientation: "horizontal" },
+  { id: "dock-B", position: { x: 6, y: 76 }, label: "B", orientation: "horizontal" },
+  { id: "dock-C", position: { x: 99, y: 84 }, label: "C", orientation: "horizontal" },
 ];
 
 const topRowX = [18, 27, 36, 45, 54, 63, 72, 81, 90];
@@ -92,7 +83,7 @@ export const INITIAL_ROBOTS: Robot[] = [
     route: [],
     routeIndex: 0,
     heading: 0,
-    dockBayId: "dock-1",
+      dockBayId: "dock-A",
     assignedVehicleId: null,
     faultType: null,
   },
@@ -118,10 +109,10 @@ export const INITIAL_ROBOTS: Robot[] = [
     battery: 41,
     position: { x: 42, y: 52 },
     targetPosition: DOCK_BAYS[1].position,
-    route: [{ x: 42, y: 50 }, DOCK_BAYS[1].position],
+    route: [{ x: 42, y: 50 }, { x: 8, y: 50 }, DOCK_BAYS[1].position],
     routeIndex: 0,
     heading: 270,
-    dockBayId: "dock-2",
+    dockBayId: "dock-B",
     assignedVehicleId: null,
     faultType: null,
     motionState: "moving",
@@ -217,7 +208,7 @@ export function createDemoFleetRobots(): Robot[] {
       route: [],
       routeIndex: 0,
       heading: 0,
-      dockBayId: "dock-1",
+      dockBayId: "dock-A",
       assignedVehicleId: null,
       faultType: null,
       motionState: "docked",
@@ -232,7 +223,7 @@ export function createDemoFleetRobots(): Robot[] {
       route: [],
       routeIndex: 0,
       heading: 0,
-      dockBayId: "dock-2",
+      dockBayId: "dock-B",
       assignedVehicleId: null,
       faultType: null,
       motionState: "docked",
@@ -247,7 +238,7 @@ export function createDemoFleetRobots(): Robot[] {
       route: [],
       routeIndex: 0,
       heading: 0,
-      dockBayId: "dock-3",
+      dockBayId: "dock-C",
       assignedVehicleId: null,
       faultType: null,
       motionState: "docked",

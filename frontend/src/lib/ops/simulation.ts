@@ -1,7 +1,6 @@
 import type {
   ChargingSession,
   DemoMode,
-  DispatchDecision,
   DockBay,
   EventLogItem,
   JobPriorityExplanation,
@@ -9,18 +8,21 @@ import type {
   Robot,
   Vehicle,
 } from "../types";
+import type { DispatchDecision } from "../dispatch";
 import { buildRouteToDock, LANE_BLOCK_ZONE } from "../routes";
 import {
   COMPLETED_DWELL_TICKS,
   DEMO_FAULT_AFTER_CHARGE_TICKS,
-  DEMO_FIRST_SPAWN_SPOT,
   DEMO_FIRST_SPAWN_TICK,
   LOW_ROBOT_BATTERY_THRESHOLD,
+  MAX_ACTIVE_VEHICLES,
   SIMULATION_TIME_SCALE,
   SPAWN_INTERVAL_MAX_TICKS,
   SPAWN_INTERVAL_MIN_TICKS,
+  SPAWN_RETRY_COOLDOWN_TICKS,
   YIELD_EVENT_COOLDOWN_TICKS,
 } from "./constants";
+import { DEMO_VEHICLE_SPAWN_PLAN } from "./demoScenario";
 import { calculateJobPriority, dispatchNextJob } from "./dispatch";
 import { advanceRobotWithCollisionAvoidance, advanceVehicleWithCollisionAvoidance } from "./movement";
 import { buildVehicleExitRoute } from "./routes";
@@ -39,7 +41,13 @@ import {
   vehicleDeparts,
   vehicleParks,
 } from "./stateTransitions";
-import { findAvailableSpot, spawnVehicle } from "./vehicleSpawn";
+import {
+  countActiveVehicles,
+  findAvailableSpot,
+  findSpotById,
+  reserveSpot,
+  spawnVehicle,
+} from "./vehicleSpawn";
 
 export interface GarageSimState {
   vehicles: Vehicle[];
@@ -51,6 +59,7 @@ export interface GarageSimState {
   currentTick: number;
   nextSpawnTick: number;
   spawnCount: number;
+  spawnPlanIndex: number;
   laneBlocked: boolean;
   demoMode: DemoMode;
   lastDecision: DispatchDecision | null;
@@ -58,8 +67,10 @@ export interface GarageSimState {
   queuedJobExplanations: JobPriorityExplanation[];
   chargeStartedTick: number | null;
   faultTriggered: boolean;
+  backupAssigned: boolean;
   scriptedVehicleId: string | null;
   missedCount: number;
+  eventKeys: Set<string>;
 }
 
 export interface TickResult {
@@ -73,6 +84,18 @@ function cloneSpots(spots: ParkingSpot[]): ParkingSpot[] {
     position: { ...spot.position },
     servicePoint: { ...spot.servicePoint },
   }));
+}
+
+function pushOnce(
+  events: EventLogItem[],
+  keys: Set<string>,
+  key: string,
+  message: string,
+  type: EventLogItem["type"],
+): EventLogItem[] {
+  if (keys.has(key)) return events;
+  keys.add(key);
+  return [...events, createEvent(message, type)];
 }
 
 export function createInitialSimState(
@@ -100,6 +123,7 @@ export function createInitialSimState(
     currentTick: 0,
     nextSpawnTick: DEMO_FIRST_SPAWN_TICK,
     spawnCount: 0,
+    spawnPlanIndex: 0,
     laneBlocked: false,
     demoMode: options?.demoMode ?? "idle",
     lastDecision: null,
@@ -107,8 +131,10 @@ export function createInitialSimState(
     queuedJobExplanations: [],
     chargeStartedTick: null,
     faultTriggered: false,
+    backupAssigned: false,
     scriptedVehicleId: null,
     missedCount: 0,
+    eventKeys: new Set(),
   };
 }
 
@@ -135,13 +161,130 @@ function updateQueuedExplanations(
     .slice(0, 3);
 }
 
-function findSpotForRouteEnd(spots: ParkingSpot[], route: GaragePosition[]): ParkingSpot | null {
-  const last = route.at(-1);
-  if (!last) return null;
-  return spots.find((s) => (
-    Math.abs(s.position.x - last.x) < 1
-    && Math.abs(s.position.y - last.y) < 1
-  )) ?? null;
+function maybeSpawnVehicle(state: {
+  vehicles: Vehicle[];
+  spots: ParkingSpot[];
+  currentTick: number;
+  nextSpawnTick: number;
+  spawnCount: number;
+  spawnPlanIndex: number;
+  scriptedVehicleId: string | null;
+  eventKeys: Set<string>;
+}): {
+  vehicles: Vehicle[];
+  spots: ParkingSpot[];
+  nextSpawnTick: number;
+  spawnCount: number;
+  spawnPlanIndex: number;
+  scriptedVehicleId: string | null;
+  newEvents: EventLogItem[];
+} {
+  const newEvents: EventLogItem[] = [];
+  let {
+    vehicles,
+    spots,
+    currentTick,
+    nextSpawnTick,
+    spawnCount,
+    spawnPlanIndex,
+    scriptedVehicleId,
+    eventKeys,
+  } = state;
+
+  if (currentTick < nextSpawnTick) {
+    return { vehicles, spots, nextSpawnTick, spawnCount, spawnPlanIndex, scriptedVehicleId, newEvents };
+  }
+
+  if (countActiveVehicles(vehicles) >= MAX_ACTIVE_VEHICLES) {
+    return {
+      vehicles, spots, spawnCount, spawnPlanIndex, scriptedVehicleId, newEvents,
+      nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
+    };
+  }
+
+  const entranceBusy = vehicles.some((v) => v.status === "entering" || v.status === "parking");
+  if (entranceBusy) {
+    return {
+      vehicles, spots, spawnCount, spawnPlanIndex, scriptedVehicleId, newEvents,
+      nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
+    };
+  }
+
+  let plan: (typeof DEMO_VEHICLE_SPAWN_PLAN)[number] | null =
+    spawnPlanIndex < DEMO_VEHICLE_SPAWN_PLAN.length
+      ? DEMO_VEHICLE_SPAWN_PLAN[spawnPlanIndex]
+      : null;
+  let target: ParkingSpot | null = null;
+
+  if (plan) {
+    if (currentTick < plan.spawnAtTick) {
+      return {
+        vehicles, spots, spawnCount, spawnPlanIndex, scriptedVehicleId, newEvents,
+        nextSpawnTick: plan.spawnAtTick,
+      };
+    }
+    if (vehicles.some((v) => v.id === plan.id)) {
+      return {
+        vehicles, spots, spawnCount, scriptedVehicleId, newEvents,
+        spawnPlanIndex: spawnPlanIndex + 1,
+        nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
+      };
+    }
+    const preferred = findSpotById(spots, plan.spotId);
+    if (preferred && !preferred.occupiedVehicleId && !preferred.reservedVehicleId) {
+      target = preferred;
+    } else {
+      return {
+        vehicles, spots, spawnCount, scriptedVehicleId, newEvents,
+        spawnPlanIndex: spawnPlanIndex + 1,
+        nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
+      };
+    }
+  } else {
+    target = findAvailableSpot(spots);
+  }
+
+  if (!target) {
+    return {
+      vehicles, spots, spawnCount, spawnPlanIndex, scriptedVehicleId, newEvents,
+      nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
+    };
+  }
+
+  const vehicle = spawnVehicle(target, currentTick, {
+    plan: plan ?? undefined,
+    vehicleId: plan?.id,
+  });
+  spots = spots.map((s) => (s.id === target!.id ? reserveSpot(s, vehicle.id) : s));
+  vehicles = [...vehicles, vehicle];
+  spawnCount += 1;
+  if (plan) {
+    spawnPlanIndex += 1;
+    if (plan.id === "EV-4466") scriptedVehicleId = vehicle.id;
+  }
+
+  const entered = pushOnce(
+    newEvents,
+    eventKeys,
+    `entered:${vehicle.id}`,
+    `${vehicle.id} entered garage.`,
+    "arrival",
+  );
+
+  nextSpawnTick = spawnPlanIndex < DEMO_VEHICLE_SPAWN_PLAN.length
+    ? DEMO_VEHICLE_SPAWN_PLAN[spawnPlanIndex].spawnAtTick
+    : currentTick + SPAWN_INTERVAL_MIN_TICKS
+      + Math.floor(Math.random() * (SPAWN_INTERVAL_MAX_TICKS - SPAWN_INTERVAL_MIN_TICKS + 1));
+
+  return {
+    vehicles,
+    spots,
+    nextSpawnTick,
+    spawnCount,
+    spawnPlanIndex,
+    scriptedVehicleId,
+    newEvents: entered,
+  };
 }
 
 export function tickSimulation(
@@ -159,13 +302,18 @@ export function tickSimulation(
     currentTick,
     nextSpawnTick,
     spawnCount,
+    spawnPlanIndex,
     lastDecision,
     lastJobExplanation,
     chargeStartedTick,
     faultTriggered,
+    backupAssigned,
     scriptedVehicleId,
     missedCount,
+    eventKeys,
   } = state;
+
+  eventKeys = new Set(eventKeys);
 
   const isRunning = state.demoMode === "running";
   const isEnding = state.demoMode === "ended";
@@ -175,30 +323,26 @@ export function tickSimulation(
     currentTick += elapsedSeconds * SIMULATION_TIME_SCALE;
   }
 
-  // Spawn vehicles
-  if (isRunning && currentTick >= nextSpawnTick) {
-    const available = findAvailableSpot(spots);
-    if (available) {
-      const deterministic = spawnCount === 0;
-      const targetSpot = deterministic
-        ? spots.find((s) => s.id === DEMO_FIRST_SPAWN_SPOT && !s.occupiedVehicleId) ?? available
-        : available;
-
-      if (!targetSpot.occupiedVehicleId) {
-        const vehicle = spawnVehicle(targetSpot, currentTick, {
-          deterministic,
-          vehicleId: deterministic ? "EV-4466" : undefined,
-        });
-        vehicles = [...vehicles, vehicle];
-        spawnCount += 1;
-        newEvents.push(createEvent(`${vehicle.id} entered garage`, "arrival"));
-        nextSpawnTick = currentTick + SPAWN_INTERVAL_MIN_TICKS
-          + Math.floor(Math.random() * (SPAWN_INTERVAL_MAX_TICKS - SPAWN_INTERVAL_MIN_TICKS + 1));
-      }
-    }
+  if (isRunning) {
+    const spawned = maybeSpawnVehicle({
+      vehicles,
+      spots,
+      currentTick,
+      nextSpawnTick,
+      spawnCount,
+      spawnPlanIndex,
+      scriptedVehicleId,
+      eventKeys,
+    });
+    vehicles = spawned.vehicles;
+    spots = spawned.spots;
+    nextSpawnTick = spawned.nextSpawnTick;
+    spawnCount = spawned.spawnCount;
+    spawnPlanIndex = spawned.spawnPlanIndex;
+    scriptedVehicleId = spawned.scriptedVehicleId;
+    newEvents.push(...spawned.newEvents);
   }
 
-  // Move vehicles
   if (isRunning) {
     const updatedVehicles: Vehicle[] = [];
 
@@ -223,17 +367,37 @@ export function tickSimulation(
 
         if (move.arrived) {
           if (vehicle.status === "entering") {
-            const entrySpot = findSpotForRouteEnd(spots, vehicle.route);
-            if (entrySpot && !entrySpot.occupiedVehicleId) {
+            const entrySpot = vehicle.spotId
+              ? findSpotById(spots, vehicle.spotId)
+              : null;
+            if (
+              entrySpot
+              && (
+                !entrySpot.occupiedVehicleId
+                || entrySpot.occupiedVehicleId === vehicle.id
+                || entrySpot.reservedVehicleId === vehicle.id
+              )
+            ) {
               const parked = vehicleParks(updated, entrySpot);
               updated = parked.vehicle;
               spots = spots.map((s) => (s.id === entrySpot.id ? parked.spot : s));
-              newEvents.push(parked.event);
-              if (spawnCount === 1) scriptedVehicleId = updated.id;
+              newEvents.push(...pushOnce(
+                [],
+                eventKeys,
+                `parked:${vehicle.id}`,
+                parked.event.message,
+                "arrival",
+              ));
             }
           } else if (vehicle.status === "leaving") {
             updated = { ...updated, status: "departed" };
-            newEvents.push(createEvent(`${vehicle.id} departed garage`, "departure"));
+            newEvents.push(...pushOnce(
+              [],
+              eventKeys,
+              `departed:${vehicle.id}`,
+              `${vehicle.id} departed garage.`,
+              "departure",
+            ));
             continue;
           }
         }
@@ -247,10 +411,16 @@ export function tickSimulation(
     vehicles = updatedVehicles;
   }
 
-  // Auto charge requests
   if (isRunning) {
     for (const vehicle of vehicles) {
       if (vehicle.status !== "parked") continue;
+      if (
+        scriptedVehicleId
+        && !backupAssigned
+        && vehicle.id !== scriptedVehicleId
+      ) {
+        continue;
+      }
       if (!shouldRequestCharge(vehicle)) continue;
 
       const hasActive = sessions.some((s) => (
@@ -269,18 +439,22 @@ export function tickSimulation(
       if (result) {
         vehicles = vehicles.map((v) => (v.id === vehicle.id ? result.vehicle : v));
         sessions = [result.session, ...sessions];
-        newEvents.push(result.event);
-        newEvents.push(createEvent(
-          `${vehicle.id} prioritized for dispatch (score ${result.session.priorityScore})`,
-          "prioritized",
+        newEvents.push(...pushOnce(
+          [],
+          eventKeys,
+          `request:${vehicle.id}:${result.session.id}`,
+          result.event.message,
+          "request",
         ));
       }
     }
   }
 
-  // Departures
+  // Departures — overnight: only completed charge dwell, one at a time
   if (isRunning) {
+    let alreadyLeaving = vehicles.some((v) => v.status === "leaving");
     for (const vehicle of vehicles) {
+      if (alreadyLeaving) break;
       const spot = spots.find((s) => s.id === vehicle.spotId);
       if (!spot) continue;
 
@@ -291,33 +465,26 @@ export function tickSimulation(
 
       const shouldLeave = (
         (vehicle.status === "completed" && completedDwell)
-        || (departureDue && ["parked", "waiting", "backup-needed"].includes(vehicle.status))
+        || (departureDue && vehicle.status === "parked" && vehicle.battery >= 70)
       );
 
       if (!shouldLeave || vehicle.status === "leaving") continue;
-
-      if (
-        departureDue
-        && (vehicle.status === "waiting" || vehicle.status === "backup-needed")
-      ) {
-        sessions = sessions.map((s) => (
-          s.vehicleId === vehicle.id && s.status === "queued"
-            ? { ...s, status: "missed" as const }
-            : s
-        ));
-        missedCount += 1;
-        newEvents.push(createEvent(`${vehicle.id} left without service — queue too long`, "missed"));
-      }
 
       const exitRoute = buildVehicleExitRoute(spot);
       const departing = vehicleDeparts(vehicle, spot, exitRoute);
       vehicles = vehicles.map((v) => (v.id === vehicle.id ? departing.vehicle : v));
       spots = spots.map((s) => (s.id === spot.id ? departing.spot : s));
-      newEvents.push(departing.event);
+      newEvents.push(...pushOnce(
+        [],
+        eventKeys,
+        `departing:${vehicle.id}`,
+        `${vehicle.id} preparing to leave.`,
+        "departure",
+      ));
+      alreadyLeaving = true;
     }
   }
 
-  // Auto dispatch
   if (isRunning) {
     const hasAvailableRobot = robots.some((robot) => (
       (robot.status === "idle" || robot.status === "docked")
@@ -354,83 +521,110 @@ export function tickSimulation(
     }
   }
 
-  // Robot movement (demo simulating only)
   const serviceArrivals: Array<{ robotId: string; vehicleId: string }> = [];
   const dockArrivals: string[] = [];
   const yieldEvents: string[] = [];
 
   if (isSimulating) {
-  robots = robots.map((robot) => {
-    if (robot.status === "faulted" || robot.status === "charging") return robot;
+    robots = robots.map((robot) => {
+      if (robot.status === "faulted" || robot.status === "charging") return robot;
+      if (robot.status !== "en-route" && robot.status !== "returning") return robot;
 
-    const moving = robot.status === "en-route" || robot.status === "returning" || robot.status === "yielding";
-    if (!moving || robot.routeIndex >= robot.route.length) return robot;
-
-    const activeStatus = robot.status === "yielding" ? "en-route" : robot.status;
-    const result = advanceRobotWithCollisionAvoidance(
-      { ...robot, status: activeStatus },
-      elapsedSeconds,
-      robots,
-      vehicles,
-      spots,
-      currentTick,
-    );
-
-    if (result.yielded) {
-      const lastYield = robot.lastYieldTick ?? 0;
-      if (currentTick - lastYield >= YIELD_EVENT_COOLDOWN_TICKS) {
-        yieldEvents.push(robot.id);
+      if (!robot.route.length || robot.routeIndex >= robot.route.length) {
+        if (robot.status === "en-route" && robot.assignedVehicleId) {
+          serviceArrivals.push({ robotId: robot.id, vehicleId: robot.assignedVehicleId });
+          return { ...robot, status: "charging" as const, route: [], routeIndex: 0, motionState: "charging" };
+        }
+        if (robot.status === "returning") {
+          dockArrivals.push(robot.id);
+          const bay = dockBays.find((item) => item.id === robot.dockBayId);
+          return {
+            ...robot,
+            status: "docked" as const,
+            position: bay?.position ?? robot.position,
+            route: [],
+            routeIndex: 0,
+            assignedVehicleId: null,
+            motionState: "docked",
+          };
+        }
+        return robot;
       }
-      return { ...result.robot, status: "yielding" as const, lastYieldTick: currentTick };
-    }
 
-    if (!result.arrived) {
-      return { ...result.robot, status: activeStatus as Robot["status"] };
-    }
+      const result = advanceRobotWithCollisionAvoidance(
+        robot,
+        elapsedSeconds,
+        robots,
+        vehicles,
+        spots,
+        currentTick,
+      );
 
-    if (robot.status === "en-route" || robot.status === "yielding") {
-      if (robot.assignedVehicleId) {
+      if (result.yielded) {
+        if (!robot.lastYieldTick || currentTick - robot.lastYieldTick >= YIELD_EVENT_COOLDOWN_TICKS) {
+          yieldEvents.push(robot.id);
+        }
+        return result.robot;
+      }
+
+      if (!result.arrived) {
+        return result.robot;
+      }
+
+      if (robot.status === "en-route" && robot.assignedVehicleId) {
         serviceArrivals.push({ robotId: robot.id, vehicleId: robot.assignedVehicleId });
         return { ...result.robot, status: "charging" as const, route: [], routeIndex: 0, motionState: "charging" };
       }
+
+      dockArrivals.push(robot.id);
+      const bay = dockBays.find((item) => item.id === robot.dockBayId);
+      return {
+        ...result.robot,
+        status: "docked" as const,
+        position: bay?.position ?? result.robot.position,
+        route: [],
+        routeIndex: 0,
+        assignedVehicleId: null,
+        motionState: "docked",
+      };
+    });
+
+    yieldEvents.forEach((robotId) => {
+      newEvents.push(createEvent(`${robotId} briefly yielding to traffic.`, "yield"));
+    });
+
+    for (const arrival of serviceArrivals) {
+      const started = startCharging(
+        arrival.robotId,
+        arrival.vehicleId,
+        robots,
+        vehicles,
+        sessions,
+        currentTick,
+        spots,
+      );
+      robots = started.robots;
+      vehicles = started.vehicles;
+      sessions = started.sessions;
+      newEvents.push(...pushOnce(
+        [],
+        eventKeys,
+        `charging:${arrival.robotId}:${arrival.vehicleId}`,
+        `${arrival.robotId} connected to ${arrival.vehicleId}. Charging started.`,
+        "charging",
+      ));
+      if (chargeStartedTick == null && scriptedVehicleId === arrival.vehicleId) {
+        chargeStartedTick = currentTick;
+      }
     }
 
-    dockArrivals.push(robot.id);
-    const bay = dockBays.find((item) => item.id === robot.dockBayId);
-    return {
-      ...result.robot,
-      status: "docked" as const,
-      position: bay?.position ?? result.robot.position,
-      route: [],
-      routeIndex: 0,
-      assignedVehicleId: null,
-      motionState: "docked",
-    };
-  });
-
-  yieldEvents.forEach((robotId) => {
-    newEvents.push(createEvent(`${robotId} yielding to vehicle traffic`, "yield"));
-  });
-
-  for (const arrival of serviceArrivals) {
-    const started = startCharging(arrival.robotId, arrival.vehicleId, robots, vehicles, sessions, currentTick);
-    robots = started.robots;
-    vehicles = started.vehicles;
-    sessions = started.sessions;
-    newEvents.push(started.event);
-    if (chargeStartedTick == null && scriptedVehicleId === arrival.vehicleId) {
-      chargeStartedTick = currentTick;
+    for (const robotId of dockArrivals) {
+      const docked = dockRobot(robotId, robots);
+      robots = docked.robots;
+      newEvents.push(createEvent(`${robotId} returned to dock.`, "dock"));
     }
   }
 
-  for (const robotId of dockArrivals) {
-    const docked = dockRobot(robotId, robots);
-    robots = docked.robots;
-    newEvents.push(docked.event);
-  }
-  }
-
-  // Charging + dock recharge
   const chargingRobots = robots.filter((robot) => robot.status === "charging" && robot.assignedVehicleId);
   const completed: Array<{ robotId: string; vehicleId: string }> = [];
   let deliveredTotal = 0;
@@ -505,7 +699,7 @@ export function tickSimulation(
         ?? dockBays.find((b) => !claimed.has(b.id));
       if (!bay || robot.dockBayId === bay.id) return robot;
 
-      newEvents.push(createEvent(`${robot.id} battery low, returning to dock`, "returning"));
+      newEvents.push(createEvent(`${robot.id} battery low, returning to dock.`, "returning"));
       return {
         ...robot,
         status: "returning" as const,
@@ -517,7 +711,6 @@ export function tickSimulation(
     });
   }
 
-  // Scripted fault
   if (
     isRunning
     && !faultTriggered
@@ -533,17 +726,28 @@ export function tickSimulation(
       robots = faulted.robots;
       vehicles = faulted.vehicles;
       sessions = faulted.sessions;
-      newEvents.push(...faulted.events);
+      const delivered = sessions.find((s) => (
+        s.vehicleId === faulted.vehicleId && s.status === "interrupted"
+      ))?.energyKwh ?? 0;
+      newEvents.push(createEvent(
+        `Connector timeout on ${faultTarget.id} while serving ${faulted.vehicleId}.`,
+        "fault",
+      ));
       faultTriggered = true;
 
       if (faulted.vehicleId) {
         const requeued = requeueVehicle(faulted.vehicleId, vehicles, sessions);
         vehicles = requeued.vehicles;
         sessions = requeued.sessions;
+        newEvents.push(createEvent(
+          `${faulted.vehicleId} requeued with ${delivered.toFixed(1)} kWh delivered.`,
+          "fault",
+        ));
 
         const backup = dispatchNextJob(vehicles, sessions, robots, spots, dockBays, currentTick, {
           laneBlocked: state.laneBlocked,
           reassignment: true,
+          preferredVehicleId: faulted.vehicleId,
         });
         if (backup) {
           const assigned = assignRobot(backup.vehicle, backup.decision, robots, sessions, true);
@@ -552,8 +756,11 @@ export function tickSimulation(
           sessions = assigned.sessions;
           lastDecision = backup.decision;
           lastJobExplanation = backup.jobExplanation;
-          newEvents.push(createEvent(`Backup assigned: ${backup.decision.selectedRobotId}.`, "reassignment"));
-          newEvents.push(assigned.event);
+          backupAssigned = true;
+          newEvents.push(createEvent(
+            `Backup assigned: ${backup.decision.selectedRobotId} to ${backup.vehicle.id}.`,
+            "reassignment",
+          ));
         } else {
           newEvents.push(createEvent(
             `No backup robot available. ${faulted.vehicleId} remains queued.`,
@@ -561,6 +768,31 @@ export function tickSimulation(
           ));
         }
       }
+    }
+  }
+
+  // Retry backup if fault already fired but no robot was free yet.
+  if (isRunning && faultTriggered && !backupAssigned && scriptedVehicleId) {
+    const requeued = requeueVehicle(scriptedVehicleId, vehicles, sessions);
+    vehicles = requeued.vehicles;
+    sessions = requeued.sessions;
+    const backup = dispatchNextJob(vehicles, sessions, robots, spots, dockBays, currentTick, {
+      laneBlocked: state.laneBlocked,
+      reassignment: true,
+      preferredVehicleId: scriptedVehicleId,
+    });
+    if (backup) {
+      const assigned = assignRobot(backup.vehicle, backup.decision, robots, sessions, true);
+      robots = assigned.robots;
+      vehicles = vehicles.map((v) => (v.id === backup.vehicle.id ? assigned.vehicle : v));
+      sessions = assigned.sessions;
+      lastDecision = backup.decision;
+      lastJobExplanation = backup.jobExplanation;
+      backupAssigned = true;
+      newEvents.push(createEvent(
+        `Backup assigned: ${backup.decision.selectedRobotId} to ${backup.vehicle.id}.`,
+        "reassignment",
+      ));
     }
   }
 
@@ -575,13 +807,16 @@ export function tickSimulation(
       currentTick,
       nextSpawnTick,
       spawnCount,
+      spawnPlanIndex,
       lastDecision,
       lastJobExplanation,
       queuedJobExplanations: updateQueuedExplanations(vehicles, sessions, currentTick),
       chargeStartedTick,
       faultTriggered,
+      backupAssigned,
       scriptedVehicleId,
       missedCount,
+      eventKeys,
     },
     newEvents,
   };

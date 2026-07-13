@@ -106,6 +106,7 @@ export interface ParkingSpot {
   servicePoint: GaragePosition;
   vehicleId: string | null;
   occupiedVehicleId: string | null;
+  reservedVehicleId?: string | null;
 }
 
 export interface ChargingSession {
@@ -157,6 +158,8 @@ export interface EventLogItem {
 export interface DockBay {
   id: string;
   position: GaragePosition;
+  label?: string;
+  orientation?: "horizontal" | "vertical";
 }
 
 export interface JobPriorityExplanation {

@@ -7,6 +7,8 @@ const ACTIVE_SESSION_STATUSES: SessionStatus[] = [
   "active",
 ];
 
+const IN_PROGRESS_STATUSES: SessionStatus[] = ["assigned", "en_route", "active"];
+
 export type VehicleActionType =
   | "request"
   | "dispatch"
@@ -22,12 +24,16 @@ export interface SelectedVehicleAction {
   actionType: VehicleActionType;
 }
 
-/** Newest session for a vehicle (sessions are prepended on create). */
+/** Newest session for a vehicle. Prefer active/interrupted over completed. */
 export function getLatestSessionForVehicle(
   vehicleId: string,
   sessions: ChargingSession[],
 ): ChargingSession | null {
-  return sessions.find((session) => session.vehicleId === vehicleId) ?? null;
+  const matches = sessions.filter((session) => session.vehicleId === vehicleId);
+  if (matches.length === 0) return null;
+  const active = matches.find((session) => ACTIVE_SESSION_STATUSES.includes(session.status)
+    || session.status === "interrupted");
+  return active ?? matches[0] ?? null;
 }
 
 export function hasActiveSessionForVehicle(
@@ -54,6 +60,7 @@ export function getSelectedVehicleAction(
   latestSession: ChargingSession | null,
   assignedRobot: Robot | null,
   canDispatch: boolean,
+  autoDispatch = true,
 ): SelectedVehicleAction {
   if (!vehicle) {
     return {
@@ -68,6 +75,9 @@ export function getSelectedVehicleAction(
   const sessionActive = latestSession
     ? ACTIVE_SESSION_STATUSES.includes(latestSession.status)
     : false;
+  const sessionInProgress = latestSession
+    ? IN_PROGRESS_STATUSES.includes(latestSession.status)
+    : false;
 
   // Prefer session truth when vehicle status lags.
   if (sessionDone || (vehicle.status === "completed" && !sessionActive)) {
@@ -81,6 +91,23 @@ export function getSelectedVehicleAction(
 
   switch (vehicle.status) {
     case "parked":
+      // Session may already be queued while vehicle status lags on one frame.
+      if (sessionActive) {
+        if (autoDispatch) {
+          return {
+            label: "Waiting for dispatch",
+            variant: "disabled",
+            disabled: true,
+            actionType: "none",
+          };
+        }
+        return {
+          label: "Dispatch Robot",
+          variant: "primary",
+          disabled: !canDispatch,
+          actionType: "dispatch",
+        };
+      }
       return {
         label: "Request Charge",
         variant: "primary",
@@ -88,6 +115,14 @@ export function getSelectedVehicleAction(
         actionType: "request",
       };
     case "waiting":
+      if (autoDispatch) {
+        return {
+          label: "Waiting for dispatch",
+          variant: "disabled",
+          disabled: true,
+          actionType: "none",
+        };
+      }
       return {
         label: "Dispatch Robot",
         variant: "primary",
@@ -103,6 +138,14 @@ export function getSelectedVehicleAction(
       };
     case "assigned":
     case "en_route":
+      if (!sessionInProgress || !assignedRobot) {
+        return {
+          label: autoDispatch ? "Waiting for dispatch" : "Dispatch Robot",
+          variant: autoDispatch ? "disabled" : "primary",
+          disabled: autoDispatch || !canDispatch,
+          actionType: autoDispatch ? "none" : "dispatch",
+        };
+      }
       return {
         label: "Job In Progress",
         variant: "disabled",

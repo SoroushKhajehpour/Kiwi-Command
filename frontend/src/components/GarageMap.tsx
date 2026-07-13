@@ -1,7 +1,8 @@
 import { Activity } from "lucide-react";
-import { COLUMN_POSITIONS, DOCK_BAYS, GARAGE_LEVEL, GARAGE_NAME } from "@/lib/mockData";
+import { DOCK_BAYS, GARAGE_LEVEL, GARAGE_NAME } from "@/lib/mockData";
 import { getVehicleConnectionPoint, LANE_BLOCK_ZONE } from "@/lib/routes";
-import type { DemoMode, FleetMetric, ParkingSpot, Robot, Vehicle } from "@/lib/types";
+import type { DemoMode, DockBay, FleetMetric, ParkingSpot, Robot, Vehicle } from "@/lib/types";
+import { MovingVehicleMarker } from "./MovingVehicleMarker";
 import { RobotMarker } from "./RobotMarker";
 import { VehicleMarker } from "./VehicleMarker";
 
@@ -14,6 +15,7 @@ interface GarageMapProps {
   autoDispatch: boolean;
   demoMode: DemoMode;
   dockOccupancy: number;
+  dockBays?: DockBay[];
   laneBlocked?: boolean;
   onSelectSpot: (spotId: string) => void;
 }
@@ -40,17 +42,20 @@ export function GarageMap({
   autoDispatch,
   demoMode,
   dockOccupancy,
+  dockBays = DOCK_BAYS,
   laneBlocked = false,
   onSelectSpot,
 }: GarageMapProps) {
   const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
-  const parkedVehicles = vehicles.filter((v) => (
-    v.spotId && !["entering", "leaving", "departed"].includes(v.status)
-  ));
+  const floorVehicles = vehicles.filter((v) => v.status !== "departed");
   const movingVehicles = vehicles.filter((v) => (
     v.status === "entering" || v.status === "parking" || v.status === "leaving"
   ));
-  const movingRobots = robots.filter((robot) => robot.routeIndex < robot.route.length);
+  const movingRobots = robots.filter((robot) => (
+    (robot.status === "en-route" || robot.status === "returning")
+    && robot.route.length > 0
+    && robot.routeIndex < robot.route.length
+  ));
   const spotById = new Map(spots.map((spot) => [spot.id, spot]));
 
   const chargingConnections = robots.flatMap((robot) => {
@@ -61,6 +66,7 @@ export function GarageMap({
   });
 
   const metricCols = Math.min(8, Math.max(6, metrics.length));
+  const docks = dockBays.length > 0 ? dockBays : DOCK_BAYS;
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden border border-border bg-white">
@@ -77,7 +83,7 @@ export function GarageMap({
               {demoMode !== "idle" ? "Demo live" : "Simulation live"}
             </strong>
           </span>
-          <span>Dock <strong className="font-semibold text-foreground">{dockOccupancy}/{DOCK_BAYS.length}</strong></span>
+          <span>Dock <strong className="font-semibold text-foreground">{dockOccupancy}/{docks.length}</strong></span>
           <span>Mode <strong className="font-semibold text-foreground">{autoDispatch ? "AUTO" : "MANUAL"}</strong></span>
           {laneBlocked && <span className="font-semibold text-error">Lane blocked</span>}
         </div>
@@ -111,6 +117,8 @@ export function GarageMap({
         <span className="absolute left-[11%] top-[4%] z-10 font-mono text-[8px] font-bold tracking-[0.16em] text-gray-500">P2 NORTH ROW</span>
         <span className="absolute bottom-[3%] left-[11%] z-10 font-mono text-[8px] font-bold tracking-[0.16em] text-gray-500">A ROW</span>
         <span className="absolute left-[46%] top-[53%] z-10 font-mono text-[8px] tracking-[0.12em] text-gray-500">P2 MAIN LANE</span>
+        <span className="absolute left-[1.5%] top-[48%] z-10 font-mono text-[7px] font-bold tracking-[0.1em] text-gray-500">IN</span>
+        <span className="absolute right-[1.5%] top-[48%] z-10 font-mono text-[7px] font-bold tracking-[0.1em] text-gray-500">OUT</span>
 
         {[24, 50, 76].map((x) => <LaneArrow key={x} x={x} />)}
 
@@ -130,29 +138,25 @@ export function GarageMap({
           </div>
         )}
 
-        {COLUMN_POSITIONS.map((column, index) => (
-          <div
-            key={index}
-            className="absolute h-[5.5%] w-[2.6%] -translate-x-1/2 -translate-y-1/2 border border-gray-400/60 bg-[#c5cac3]"
-            style={{ left: `${column.x}%`, top: `${column.y}%` }}
-          >
-            <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-kiwi-dark/70" />
-          </div>
-        ))}
-
-        <div
-          className="absolute -translate-x-1/2 -translate-y-1/2 border-2 border-dashed border-kiwi-dark/50 bg-kiwi-soft/60"
-          style={{ left: "5.5%", top: "50%", width: "8%", height: "35%" }}
-        >
-          <span className="absolute left-1/2 top-1 -translate-x-1/2 whitespace-nowrap font-mono text-[7px] font-bold tracking-[0.14em] text-kiwi-dark">DOCK</span>
-        </div>
-        {DOCK_BAYS.map((bay) => (
-          <div
-            key={bay.id}
-            className="absolute -translate-x-1/2 -translate-y-1/2 border border-kiwi-dark/25 bg-white/35"
-            style={{ left: `${bay.position.x}%`, top: `${bay.position.y}%`, width: "5.5%", height: "6%" }}
-          />
-        ))}
+        {docks.map((bay) => {
+          const label = bay.label ?? bay.id.replace("dock-", "");
+          return (
+            <div
+              key={bay.id}
+              className="absolute z-10 -translate-x-1/2 -translate-y-1/2 border border-dashed border-kiwi-dark/45 bg-kiwi-soft/55"
+              style={{
+                left: `${bay.position.x}%`,
+                top: `${bay.position.y}%`,
+                width: bay.id === "dock-C" ? "2.4%" : "5.5%",
+                height: bay.id === "dock-C" ? "5.5%" : "7%",
+              }}
+            >
+              <span className="absolute left-1/2 top-0.5 -translate-x-1/2 whitespace-nowrap font-mono text-[6px] font-bold tracking-[0.12em] text-kiwi-dark">
+                DOCK {label}
+              </span>
+            </div>
+          );
+        })}
 
         <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
           {movingRobots.map((robot) => {
@@ -192,29 +196,27 @@ export function GarageMap({
         </svg>
 
         {spots.map((spot) => {
-          const vehicle = spot.vehicleId ? vehicleById.get(spot.vehicleId) ?? null : null;
-          const showParked = vehicle && parkedVehicles.some((v) => v.id === vehicle.id);
+          const vehicle = spot.occupiedVehicleId
+            ? vehicleById.get(spot.occupiedVehicleId) ?? null
+            : spot.vehicleId
+              ? vehicleById.get(spot.vehicleId) ?? null
+              : null;
+          const selectable = vehicle && vehicle.status !== "departed" && vehicle.status !== "leaving"
+            ? vehicle
+            : null;
           return (
             <VehicleMarker
               key={spot.id}
               spot={spot}
-              vehicle={showParked ? vehicle : null}
+              vehicle={selectable}
               selected={spot.id === selectedSpotId}
               onSelect={onSelectSpot}
             />
           );
         })}
 
-        {movingVehicles.map((vehicle) => (
-          <div
-            key={vehicle.id}
-            className="absolute z-25 -translate-x-1/2 -translate-y-1/2"
-            style={{ left: `${vehicle.position.x}%`, top: `${vehicle.position.y}%` }}
-          >
-            <span className="rounded bg-white/90 px-1 py-0.5 font-mono text-[7px] font-bold shadow-sm">
-              {vehicle.id}
-            </span>
-          </div>
+        {floorVehicles.map((vehicle) => (
+          <MovingVehicleMarker key={vehicle.id} vehicle={vehicle} />
         ))}
 
         {robots.map((robot) => <RobotMarker key={robot.id} robot={robot} />)}

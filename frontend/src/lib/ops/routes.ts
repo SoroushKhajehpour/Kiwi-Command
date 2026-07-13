@@ -26,7 +26,7 @@ export function buildVehicleEntryRoute(
   ]);
 }
 
-/** Route from parked spot to garage exit via main lane. */
+/** Route from parked spot to garage exit via main lane — vertical first, never diagonal. */
 export function buildVehicleExitRoute(
   spot: ParkingSpot,
   from: GaragePosition = spot.position,
@@ -34,6 +34,7 @@ export function buildVehicleExitRoute(
 ): GaragePosition[] {
   const approachY = spot.row === "top" ? 28 : 72;
   return cleanRoute(from, [
+    { x: from.x, y: approachY },
     { x: spot.position.x, y: approachY },
     { x: spot.position.x, y: LANE_CENTER_Y },
     { x: to.x, y: LANE_CENTER_Y },

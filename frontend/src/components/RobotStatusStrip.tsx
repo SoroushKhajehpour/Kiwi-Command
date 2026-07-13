@@ -42,11 +42,13 @@ export function RobotStatusStrip({
                 {robot.assignedVehicleId
                   ? `Job ${robot.assignedVehicleId}`
                   : robot.status === "docked"
-                    ? `Recharging · ${robot.dockBayId}`
+                    ? `Recharging · ${robot.dockBayId?.replace("dock-", "Dock ") ?? "dock"}`
                     : robot.status === "faulted"
                       ? "Service required"
+                      : robot.status === "idle" && (robot.battery ?? 100) < 99.5
+                        ? `Recharging · ${robot.dockBayId?.replace("dock-", "Dock ") ?? "dock"}`
                       : robot.status === "idle"
-                        ? `Staged · ${robot.dockBayId ?? "—"}`
+                        ? `Ready · ${robot.dockBayId?.replace("dock-", "Dock ") ?? "—"}`
                         : "Returning to dock"}
               </span>
               {robot.status === "faulted" && (

@@ -31,16 +31,19 @@ function cleanRoute(from: GaragePosition, points: GaragePosition[]): GaragePosit
   });
 }
 
-export function getVehicleServicePoint(spot: ParkingSpot): GaragePosition {
+export function getVehicleServicePoint(
+  spot: ParkingSpot,
+  side: "left" | "right" = "right",
+): GaragePosition {
   return {
-    x: spot.position.x + 3,
+    x: spot.position.x + (side === "left" ? -4.5 : 4.5),
     y: spot.rotation === 0 ? 28 : 72,
   };
 }
 
 export function getVehicleConnectionPoint(spot: ParkingSpot): GaragePosition {
   return {
-    x: spot.position.x + 1.5,
+    x: spot.position.x,
     y: spot.rotation === 0 ? 27 : 73,
   };
 }
@@ -54,9 +57,9 @@ function laneTravelCrossesBlock(fromX: number, toX: number): boolean {
 export function buildRouteToVehicle(
   from: GaragePosition,
   spot: ParkingSpot,
-  options?: { laneBlocked?: boolean },
+  options?: { laneBlocked?: boolean; side?: "left" | "right" },
 ): GaragePosition[] {
-  const servicePoint = getVehicleServicePoint(spot);
+  const servicePoint = getVehicleServicePoint(spot, options?.side ?? "right");
 
   if (options?.laneBlocked && laneTravelCrossesBlock(from.x, servicePoint.x)) {
     return cleanRoute(from, [
@@ -80,20 +83,11 @@ export function buildRouteToDock(
   bay: DockBay,
   options?: { laneBlocked?: boolean },
 ): GaragePosition[] {
-  if (options?.laneBlocked && laneTravelCrossesBlock(from.x, bay.position.x)) {
-    return cleanRoute(from, [
-      { x: from.x, y: LANE_CENTER_Y },
-      { x: 30, y: LANE_CENTER_Y },
-      { x: 30, y: 68 },
-      { x: bay.position.x, y: 68 },
-      { x: bay.position.x, y: LANE_CENTER_Y },
-      bay.position,
-    ]);
-  }
-
+  const approachY = bay.position.y < LANE_CENTER_Y ? 28 : 72;
   return cleanRoute(from, [
     { x: from.x, y: LANE_CENTER_Y },
     { x: bay.position.x, y: LANE_CENTER_Y },
+    { x: bay.position.x, y: approachY },
     bay.position,
   ]);
 }
@@ -127,16 +121,36 @@ export function etaSecondsForRoute(
   return routeDistanceMeters(position, route, routeIndex) / ROBOT_METERS_PER_SECOND;
 }
 
+export const ROBOT_HOME_DOCK: Record<string, string> = {
+  "R-01": "dock-A",
+  "R-02": "dock-B",
+  "R-03": "dock-C",
+};
+
 export function getAvailableDockBay(
   robots: Robot[],
   dockBays: DockBay[],
   robotId?: string,
 ): DockBay | null {
+  const holdingStatuses = new Set(["docked", "returning", "idle", "faulted"]);
   const claimed = new Set(
     robots
-      .filter((robot) => robot.id !== robotId && robot.dockBayId)
-      .map((robot) => robot.dockBayId),
+      .filter((robot) => (
+        robot.id !== robotId
+        && robot.dockBayId
+        && holdingStatuses.has(robot.status)
+      ))
+      .map((robot) => robot.dockBayId as string),
   );
+
+  if (robotId) {
+    const homeId = ROBOT_HOME_DOCK[robotId];
+    if (homeId && !claimed.has(homeId)) {
+      const home = dockBays.find((bay) => bay.id === homeId);
+      if (home) return home;
+    }
+  }
+
   return dockBays.find((bay) => !claimed.has(bay.id)) ?? null;
 }
 

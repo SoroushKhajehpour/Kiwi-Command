@@ -1,5 +1,6 @@
 import type { ParkingSpot, Vehicle, VehiclePaint } from "../types";
 import { GARAGE_ENTRANCE } from "./constants";
+import type { DemoSpawnPlanEntry } from "./demoScenario";
 import { buildVehicleEntryRoute } from "./routes";
 import { calculateVehiclePriority } from "./dispatch";
 
@@ -26,28 +27,55 @@ function pick<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)];
 }
 
+function headingToFirst(from: { x: number; y: number }, route: { x: number; y: number }[]): number {
+  if (!route.length) return 90;
+  const to = route[0];
+  const degrees = (Math.atan2(to.x - from.x, -(to.y - from.y)) * 180) / Math.PI;
+  return ((degrees % 360) + 360) % 360;
+}
+
 export function resetVehicleCounter(start = 9000): void {
   vehicleCounter = start;
 }
 
 export function findAvailableSpot(spots: ParkingSpot[]): ParkingSpot | null {
-  return spots.find((spot) => !spot.occupiedVehicleId) ?? null;
+  return spots.find((spot) => !spot.occupiedVehicleId && !spot.reservedVehicleId) ?? null;
 }
 
-export function generateVehicleProfile(
+export function findSpotById(spots: ParkingSpot[], spotId: string): ParkingSpot | null {
+  return spots.find((spot) => spot.id === spotId) ?? null;
+}
+
+export function countActiveVehicles(vehicles: Vehicle[]): number {
+  return vehicles.filter((v) => v.status !== "departed").length;
+}
+
+export function reserveSpot(spot: ParkingSpot, vehicleId: string): ParkingSpot {
+  return { ...spot, reservedVehicleId: vehicleId };
+}
+
+export function spawnVehicle(
+  spot: ParkingSpot,
   currentTick: number,
-  options?: { deterministic?: boolean; spotId?: string },
-): Omit<Vehicle, "id" | "spotId" | "position" | "route" | "routeIndex" | "heading" | "status"> {
-  const battery = options?.deterministic ? 29 : randomBetween(15, 75);
-  const targetBattery = options?.deterministic ? 75 : randomBetween(70, 90);
-  const departureOffset = options?.deterministic ? 30 : randomBetween(18, 50);
+  options?: { plan?: DemoSpawnPlanEntry; vehicleId?: string },
+): Vehicle {
+  vehicleCounter += 1;
+  const plan = options?.plan;
+  const overnight = Math.random() < 0.85;
+  const battery = plan?.battery ?? randomBetween(15, 75);
+  const targetBattery = plan?.targetBattery ?? randomBetween(70, 90);
+  const departureOffset = plan?.departureOffset
+    ?? (overnight ? randomBetween(8000, 16000) : randomBetween(2500, 5000));
+  const model = plan?.model ?? pick(MODELS);
+  const paint = plan?.paint ?? pick(PAINTS);
+  const requestedEnergyKwh = plan && plan.requestedKwh > 0 ? plan.requestedKwh : null;
 
   const priority = calculateVehiclePriority(
     {
       id: "temp",
-      spotId: null,
-      model: "",
-      paint: "silver",
+      spotId: spot.id,
+      model,
+      paint,
       battery,
       status: "parked",
       assignedRobotId: null,
@@ -64,38 +92,25 @@ export function generateVehicleProfile(
     currentTick,
   );
 
+  const route = buildVehicleEntryRoute(spot);
+  const position = { ...GARAGE_ENTRANCE };
+
   return {
-    model: options?.deterministic ? "Nissan Ariya" : pick(MODELS),
-    paint: options?.deterministic ? "silver" : pick(PAINTS),
+    id: options?.vehicleId ?? plan?.id ?? `EV-${vehicleCounter}`,
+    spotId: spot.id,
+    model,
+    paint,
     battery,
     assignedRobotId: null,
-    requestedEnergyKwh: null,
+    requestedEnergyKwh,
     priority,
     targetBattery,
     arrivalTick: currentTick,
     expectedDepartureTick: currentTick + departureOffset,
-  };
-}
-
-export function spawnVehicle(
-  spot: ParkingSpot,
-  currentTick: number,
-  options?: { deterministic?: boolean; vehicleId?: string },
-): Vehicle {
-  vehicleCounter += 1;
-  const profile = generateVehicleProfile(currentTick, {
-    deterministic: options?.deterministic,
-    spotId: spot.id,
-  });
-
-  return {
-    id: options?.vehicleId ?? `EV-${vehicleCounter}`,
-    spotId: null,
-    ...profile,
     status: "entering",
-    position: { ...GARAGE_ENTRANCE },
-    route: buildVehicleEntryRoute(spot),
+    position,
+    route,
     routeIndex: 0,
-    heading: 90,
+    heading: headingToFirst(position, route),
   };
 }

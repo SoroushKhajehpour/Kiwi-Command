@@ -5,13 +5,14 @@ import type {
   DockBay,
   EventLogItem,
   FaultType,
+  GaragePosition,
   ParkingSpot,
   Robot,
   Vehicle,
 } from "../types";
 import { roundKwh } from "../vehicleActions";
 import type { DispatchDecision } from "../dispatch";
-import { buildRouteToDock } from "../routes";
+import { buildRouteToDock, getAvailableDockBay, getVehicleServicePoint } from "../routes";
 import { CHARGE_RATE_KW } from "./constants";
 import { calculateJobPriority } from "./dispatch";
 
@@ -143,32 +144,78 @@ export function startCharging(
   vehicles: Vehicle[],
   sessions: ChargingSession[],
   currentTick: number,
+  spots?: ParkingSpot[],
 ): {
   robots: Robot[];
   vehicles: Vehicle[];
   sessions: ChargingSession[];
   event: EventLogItem;
 } {
-  const nextRobots = robots.map((robot) => (
-    robot.id === robotId
-      ? { ...robot, status: "charging" as const, route: [], routeIndex: 0, motionState: "charging" as const }
-      : robot
+  const robot = robots.find((item) => item.id === robotId);
+  const vehicle = vehicles.find((item) => item.id === vehicleId);
+  if (!robot || !vehicle || robot.status === "faulted") {
+    return {
+      robots,
+      vehicles,
+      sessions,
+      event: createEvent(`${robotId} could not start charging ${vehicleId}.`, "dispatch"),
+    };
+  }
+
+  const session = sessions.find((item) => (
+    item.vehicleId === vehicleId
+    && ["queued", "assigned", "en_route", "interrupted", "active"].includes(item.status)
   ));
-  const nextVehicles = vehicles.map((vehicle) => (
-    vehicle.id === vehicleId ? { ...vehicle, status: "charging" as const } : vehicle
+  if (session?.status === "active" && session.robotId === robotId) {
+    return { robots, vehicles, sessions, event: createEvent(`${robotId} already charging ${vehicleId}`, "charging") };
+  }
+  if (session?.status === "completed" || vehicle.status === "completed") {
+    return { robots, vehicles, sessions, event: createEvent(`${vehicleId} already completed.`, "charging") };
+  }
+
+  let service = robot.position;
+  if (spots && vehicle.spotId) {
+    const spot = spots.find((item) => item.id === vehicle.spotId);
+    if (spot) service = getVehicleServicePoint(spot);
+  }
+
+  const nextRobots = robots.map((item) => (
+    item.id === robotId
+      ? {
+          ...item,
+          status: "charging" as const,
+          position: { ...service },
+          route: [],
+          routeIndex: 0,
+          motionState: "charging" as const,
+          assignedVehicleId: vehicleId,
+        }
+      : item
   ));
-  const nextSessions = sessions.map((session) => (
-    session.vehicleId === vehicleId
-    && (session.status === "queued" || session.status === "assigned" || session.status === "en_route" || session.status === "interrupted")
-      ? { ...session, status: "active" as const, startedAt: nowLabel(), etaSeconds: null, startedTick: currentTick }
-      : session
+  const nextVehicles = vehicles.map((item) => (
+    item.id === vehicleId
+      ? { ...item, status: "charging" as const, assignedRobotId: robotId }
+      : item
+  ));
+  const nextSessions = sessions.map((item) => (
+    item.vehicleId === vehicleId
+    && ["queued", "assigned", "en_route", "interrupted", "active"].includes(item.status)
+      ? {
+          ...item,
+          status: "active" as const,
+          robotId,
+          startedAt: item.startedAt === "—" || !item.startedAt ? nowLabel() : item.startedAt,
+          etaSeconds: null,
+          startedTick: item.startedTick ?? currentTick,
+        }
+      : item
   ));
 
   return {
     robots: nextRobots,
     vehicles: nextVehicles,
     sessions: nextSessions,
-    event: createEvent(`${robotId} arrived and started charging ${vehicleId}`, "charging"),
+    event: createEvent(`${robotId} arrived at ${vehicle.spotId ?? "bay"}. Charging started.`, "charging"),
   };
 }
 
@@ -209,13 +256,7 @@ export function completeCharging(
       : session
   ));
 
-  const claimedDockBays = new Set(
-    robots
-      .filter((robot) => robot.id !== robotId && robot.dockBayId)
-      .map((robot) => robot.dockBayId)
-      .filter((id): id is string => Boolean(id)),
-  );
-  const bay = dockBays.find((item) => !claimedDockBays.has(item.id)) ?? null;
+  const bay = getAvailableDockBay(robots, dockBays, robotId);
   const robot = robots.find((item) => item.id === robotId);
 
   const nextRobots = robots.map((item) => {
@@ -298,14 +339,25 @@ export function clearFault(
   const robot = robots.find((item) => item.id === robotId);
   if (!robot || robot.status !== "faulted") return null;
 
-  const claimed = new Set(
-    robots.filter((item) => item.id !== robotId && item.dockBayId).map((item) => item.dockBayId),
-  );
-  const bay = dockBays.find((item) => !claimed.has(item.id)) ?? null;
+  const bay = getAvailableDockBay(robots, dockBays, robotId);
 
   const nextRobots = robots.map((item) => {
     if (item.id !== robotId) return item;
     if (!bay) return { ...item, status: "idle" as const, faultType: null };
+    const nearDock = Math.hypot(item.position.x - bay.position.x, item.position.y - bay.position.y) < 2;
+    if (nearDock) {
+      return {
+        ...item,
+        status: "docked" as const,
+        faultType: null,
+        dockBayId: bay.id,
+        position: { ...bay.position },
+        route: [],
+        routeIndex: 0,
+        targetPosition: null,
+        motionState: "docked" as const,
+      };
+    }
     const route = buildRouteToDock(item.position, bay, { laneBlocked });
     return {
       ...item,
@@ -315,12 +367,18 @@ export function clearFault(
       route,
       routeIndex: 0,
       targetPosition: bay.position,
+      motionState: "moving" as const,
     };
   });
 
   return {
     robots: nextRobots,
-    event: createEvent(`${robotId} fault cleared; returning to ${bay?.id ?? "staging"}`, "fault"),
+    event: createEvent(
+      bay
+        ? `${robotId} fault cleared. Returning to dock.`
+        : `${robotId} fault cleared and available.`,
+      "fault",
+    ),
   };
 }
 
@@ -341,12 +399,13 @@ export function vehicleParks(
     ...spot,
     vehicleId: vehicle.id,
     occupiedVehicleId: vehicle.id,
+    reservedVehicleId: null,
   };
   return {
     vehicle: parked,
     spot: updatedSpot,
     event: createEvent(
-      `${vehicle.id} parked at ${spot.id} with ${Math.round(vehicle.battery)}% battery`,
+      `${vehicle.id} parked at ${spot.id} with ${Math.round(vehicle.battery)}% battery.`,
       "arrival",
     ),
   };
@@ -362,16 +421,18 @@ export function vehicleDeparts(
     status: "leaving",
     route: exitRoute,
     routeIndex: 0,
+    spotId: null,
   };
   const clearedSpot: ParkingSpot = {
     ...spot,
     vehicleId: null,
     occupiedVehicleId: null,
+    reservedVehicleId: null,
   };
   return {
     vehicle: leaving,
     spot: clearedSpot,
-    event: createEvent(`${vehicle.id} departing garage`, "departure"),
+    event: createEvent(`${vehicle.id} departing garage.`, "departure"),
   };
 }
 
@@ -403,7 +464,7 @@ export function applyFaultToState(
 } {
   const vehicleId = robot.assignedVehicleId;
   const label = faultType.replace(/_/g, " ");
-
+  // Faulted robots freeze where they are — never side-step / teleport.
   const nextRobots = robots.map((item) => (
     item.id === robot.id
       ? {
@@ -415,6 +476,7 @@ export function applyFaultToState(
           route: [],
           routeIndex: 0,
           targetPosition: null,
+          // keep item.position unchanged
         }
       : item
   ));
@@ -446,11 +508,15 @@ export function applyFaultToState(
 
 export function shouldRequestCharge(vehicle: Vehicle): boolean {
   if (vehicle.status !== "parked") return false;
+  if (vehicle.requestedEnergyKwh != null && vehicle.requestedEnergyKwh > 0) return true;
   const gap = vehicle.targetBattery - vehicle.battery;
   return vehicle.battery < 45 || gap >= 20 || vehicle.priority === "Urgent";
 }
 
 export function estimateRequestedEnergy(vehicle: Vehicle): number {
+  if (vehicle.requestedEnergyKwh != null && vehicle.requestedEnergyKwh > 0) {
+    return roundKwh(vehicle.requestedEnergyKwh);
+  }
   const gap = Math.max(0, vehicle.targetBattery - vehicle.battery);
   return roundKwh(Math.min(35, Math.max(8, (gap / 100) * 75)));
 }

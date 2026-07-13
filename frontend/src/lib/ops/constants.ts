@@ -6,24 +6,31 @@ export const TICKS_PER_SIM_SECOND = 1;
 export const GARAGE_ENTRANCE: GaragePosition = { x: 2, y: 50 };
 export const GARAGE_EXIT: GaragePosition = { x: 98, y: 50 };
 
-export const SPAWN_INTERVAL_MIN_TICKS = 8;
-export const SPAWN_INTERVAL_MAX_TICKS = 15;
-
-export const VEHICLE_MAP_UNITS_PER_SECOND = 8;
+export const VEHICLE_MAP_UNITS_PER_SECOND = 6;
+export const ROBOT_MAP_UNITS_PER_SECOND = 10;
 export const VEHICLE_BATTERY_CAPACITY_KWH = 75;
 export const DEMO_CHARGING_KWH_PER_SECOND = 0.7;
 export const CHARGE_RATE_KW = 7;
 
-export const ROBOT_COLLISION_RADIUS = 2.5;
+export const ROBOT_COLLISION_RADIUS = 2;
 export const VEHICLE_COLLISION_RADIUS = 3.5;
+export const MIN_ROBOT_SEPARATION = 5.5;
+export const ARRIVAL_DISTANCE_THRESHOLD = 1.2;
+export const MAX_YIELD_TICKS = 16;
 
-export const YIELD_EVENT_COOLDOWN_TICKS = 3;
-export const COMPLETED_DWELL_TICKS = 12;
+export const SPAWN_INTERVAL_MIN_TICKS = 600;
+export const SPAWN_INTERVAL_MAX_TICKS = 1500;
+export const SPAWN_RETRY_COOLDOWN_TICKS = 40;
+export const MAX_ACTIVE_VEHICLES = 10;
+export const TARGET_OCCUPANCY_MAX = 0.8;
+
+export const YIELD_EVENT_COOLDOWN_TICKS = 50;
+export const COMPLETED_DWELL_TICKS = 40;
 export const LOW_ROBOT_BATTERY_THRESHOLD = 25;
 
 /** Scripted demo fault fires this many sim-ticks after first charge starts. */
-export const DEMO_FAULT_AFTER_CHARGE_TICKS = 6;
+export const DEMO_FAULT_AFTER_CHARGE_TICKS = 8;
 
 /** First spawn is deterministic for interview demo. */
-export const DEMO_FIRST_SPAWN_TICK = 4;
+export const DEMO_FIRST_SPAWN_TICK = 10;
 export const DEMO_FIRST_SPAWN_SPOT = "A5";

@@ -41,6 +41,7 @@ import {
   getSelectedVehicleAction,
   hasActiveSessionForVehicle,
 } from "@/lib/vehicleActions";
+import { getVehicleBySelectedSpot } from "@/lib/selection";
 import type {
   ChargingSession,
   DemoMode,
@@ -52,6 +53,11 @@ import type {
   Vehicle,
 } from "@/lib/types";
 import { advanceCharging } from "@/lib/charging";
+import { api, isBackendEnabled } from "@/lib/api/client";
+import { mapSystemState } from "@/lib/api/mappers";
+import type { ApiSystemState } from "@/lib/api/types";
+import { useTelemetry } from "@/lib/api/useTelemetry";
+import { describeChargeDecision } from "@/lib/ops/chargeDecision";
 
 const initialTarget = INITIAL_VEHICLES.find((vehicle) => vehicle.id === "EV-4466") ?? null;
 
@@ -69,17 +75,22 @@ function nowLabel(): string {
 }
 
 export default function Home() {
+  const useBackend = isBackendEnabled();
+  const telemetry = useTelemetry(useBackend);
+
   const [vehicles, setVehicles] = useState<Vehicle[]>(INITIAL_VEHICLES);
   const [robots, setRobots] = useState<Robot[]>(() => cloneRobots(INITIAL_ROBOTS));
   const [sessions, setSessions] = useState<ChargingSession[]>(INITIAL_SESSIONS);
   const [events, setEvents] = useState<EventLogItem[]>(INITIAL_EVENTS);
   const [energyToday, setEnergyToday] = useState(ENERGY_DELIVERED_TODAY_KWH);
   const [spots, setSpots] = useState<ParkingSpot[]>(PARKING_SPOTS);
-  const [selectedSpotId, setSelectedSpotId] = useState<string | null>("A5");
+  const [selectedSpotId, setSelectedSpotId] = useState<string | null>("A2");
   const [autoDispatch, setAutoDispatch] = useState(true);
   const [laneBlocked, setLaneBlocked] = useState(false);
   const [demoMode, setDemoMode] = useState<DemoMode>("idle");
+  const [dockBays, setDockBays] = useState(DOCK_BAYS);
   const [telemetryTick, setTelemetryTick] = useState(0);
+  const [actionPending, setActionPending] = useState(false);
   const [lastDecision, setLastDecision] = useState<DispatchDecision | null>(
     initialTarget ? selectBestRobot(INITIAL_ROBOTS, initialTarget, PARKING_SPOTS, DOCK_BAYS) : null,
   );
@@ -103,8 +114,53 @@ export default function Home() {
   useEffect(() => { demoModeRef.current = demoMode; }, [demoMode]);
 
   useEffect(() => {
+    if (!useBackend || !telemetry.connected) return;
+    setVehicles(telemetry.vehicles);
+    setRobots(telemetry.robots);
+    setSessions(telemetry.sessions);
+    setEvents(telemetry.events);
+    setSpots(telemetry.spots);
+    setDockBays(telemetry.dockBays.length > 0 ? telemetry.dockBays : DOCK_BAYS);
+    setEnergyToday(telemetry.energyToday);
+    setDemoMode(telemetry.demoMode);
+    setLaneBlocked(telemetry.laneBlocked);
+    setLastDecision(telemetry.lastDecision);
+    setAutoDispatch(telemetry.autoDispatch);
+    setMissedCount(telemetry.missedCount);
+    setTelemetryTick(telemetry.tick);
+    if (telemetry.lastDecision && telemetry.jobPriorityReasons.length > 0) {
+      setLastJobExplanation({
+        vehicleId: telemetry.lastDecision.vehicleId,
+        spotId: telemetry.vehicles.find((v) => v.id === telemetry.lastDecision?.vehicleId)?.spotId ?? "—",
+        priorityScore: telemetry.lastDecision.selectedScore,
+        reasons: telemetry.jobPriorityReasons,
+      });
+    }
+    setQueuedJobExplanations(
+      telemetry.sessions
+        .filter((session) => session.status === "queued")
+        .map((session) => {
+          const vehicle = telemetry.vehicles.find((item) => item.id === session.vehicleId);
+          if (!vehicle) return null;
+          return {
+            vehicleId: vehicle.id,
+            spotId: vehicle.spotId ?? session.spotId,
+            priorityScore: session.priorityScore,
+            reasons: [`score ${session.priorityScore}`],
+          };
+        })
+        .filter((item): item is JobPriorityExplanation => item !== null)
+        .sort((a, b) => b.priorityScore - a.priorityScore)
+        .slice(0, 3),
+    );
+  }, [useBackend, telemetry]);
+
+  useEffect(() => {
+    if (useBackend) return;
     let previousTime = performance.now();
     let chargeElapsed = 0;
+    let lastUiCommit = 0;
+    let pendingEvents: EventLogItem[] = [];
 
     const timer = window.setInterval(() => {
       const currentTime = performance.now();
@@ -119,19 +175,28 @@ export default function Home() {
         if (!simStateRef.current) return;
         const result = tickSimulation(simStateRef.current, elapsedSeconds, DOCK_BAYS);
         simStateRef.current = { ...result.state, laneBlocked: laneBlockedRef.current };
-
-        setVehicles(result.state.vehicles);
-        setRobots(result.state.robots);
-        setSessions(result.state.sessions);
-        setSpots(result.state.spots);
-        setEnergyToday(result.state.energyToday);
-        setLastDecision(result.state.lastDecision);
-        setLastJobExplanation(result.state.lastJobExplanation);
-        setQueuedJobExplanations(result.state.queuedJobExplanations);
-        setMissedCount(result.state.missedCount);
-
         if (result.newEvents.length > 0) {
-          setEvents((current) => [...result.newEvents.reverse(), ...current]);
+          pendingEvents = [...result.newEvents, ...pendingEvents];
+        }
+
+        // Commit UI at ~10fps; keep sim ticking at 20fps.
+        if (currentTime - lastUiCommit >= 100) {
+          lastUiCommit = currentTime;
+          setVehicles(result.state.vehicles);
+          setRobots(result.state.robots);
+          setSessions(result.state.sessions);
+          setSpots(result.state.spots);
+          setEnergyToday(result.state.energyToday);
+          setLastDecision(result.state.lastDecision);
+          setLastJobExplanation(result.state.lastJobExplanation);
+          setQueuedJobExplanations(result.state.queuedJobExplanations);
+          setMissedCount(result.state.missedCount);
+
+          if (pendingEvents.length > 0) {
+            const batch = pendingEvents;
+            pendingEvents = [];
+            setEvents((current) => [...batch.reverse(), ...current].slice(0, 50));
+          }
         }
         return;
       }
@@ -272,15 +337,71 @@ export default function Home() {
     }, 50);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [useBackend]);
 
-  const selectedVehicle = useMemo(() => {
-    if (selectedSpotId) {
-      const atSpot = vehicles.find((v) => v.spotId === selectedSpotId);
-      if (atSpot) return atSpot;
+  const actionInFlightRef = useRef(false);
+
+  function applyBackendState(raw: ApiSystemState) {
+    const mapped = mapSystemState(raw);
+    setVehicles(mapped.vehicles);
+    setRobots(mapped.robots);
+    setSessions(mapped.sessions);
+    setEvents(mapped.events);
+    setSpots(mapped.spots);
+    setDockBays(mapped.dockBays.length > 0 ? mapped.dockBays : DOCK_BAYS);
+    setEnergyToday(mapped.energyToday);
+    setDemoMode(mapped.demoMode);
+    setLaneBlocked(mapped.laneBlocked);
+    setLastDecision(mapped.lastDecision);
+    setAutoDispatch(mapped.autoDispatch);
+    setMissedCount(mapped.missedCount);
+    setTelemetryTick(mapped.tick);
+    if (mapped.lastDecision && mapped.jobPriorityReasons.length > 0) {
+      setLastJobExplanation({
+        vehicleId: mapped.lastDecision.vehicleId,
+        spotId: mapped.vehicles.find((v) => v.id === mapped.lastDecision?.vehicleId)?.spotId ?? "—",
+        priorityScore: mapped.lastDecision.selectedScore,
+        reasons: mapped.jobPriorityReasons,
+      });
     }
-    return vehicles.find((v) => v.status === "entering" || v.status === "leaving") ?? null;
-  }, [vehicles, selectedSpotId]);
+    setQueuedJobExplanations(
+      mapped.sessions
+        .filter((session) => session.status === "queued")
+        .map((session) => {
+          const vehicle = mapped.vehicles.find((item) => item.id === session.vehicleId);
+          if (!vehicle) return null;
+          return {
+            vehicleId: vehicle.id,
+            spotId: vehicle.spotId ?? session.spotId,
+            priorityScore: session.priorityScore,
+            reasons: [`score ${session.priorityScore}`],
+          };
+        })
+        .filter((item): item is JobPriorityExplanation => item !== null)
+        .sort((a, b) => b.priorityScore - a.priorityScore)
+        .slice(0, 3),
+    );
+  }
+
+  async function runApi(action: () => Promise<ApiSystemState>) {
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setActionPending(true);
+    try {
+      const state = await action();
+      applyBackendState(state);
+    } catch (error) {
+      addEvent(error instanceof Error ? error.message : "API request failed", "dispatch");
+    } finally {
+      actionInFlightRef.current = false;
+      setActionPending(false);
+    }
+  }
+
+  const selectedVehicle = useMemo(
+    () => getVehicleBySelectedSpot(selectedSpotId, vehicles, spots),
+    [vehicles, selectedSpotId, spots],
+  );
 
   const operationsMetrics = useMemo(
     () => deriveOperationsMetrics(robots, vehicles, sessions, events, energyToday, DOCK_BAYS, missedCount),
@@ -292,12 +413,21 @@ export default function Home() {
   }
 
   function requestChargeFor(vehicle: Vehicle, energyKwh = vehicle.requestedEnergyKwh ?? 22): Vehicle | null {
-    if (hasActiveSessionForVehicle(vehicle.id, sessionsRef.current)) return null;
+    if (hasActiveSessionForVehicle(vehicle.id, sessionsRef.current)) {
+      addEvent(`${vehicle.id} already has an active session.`, "request");
+      return null;
+    }
     if (vehicle.status === "waiting" || vehicle.status === "backup-needed") return vehicle;
-    if (vehicle.status !== "parked" && vehicle.status !== "completed") return null;
+    if (vehicle.status !== "parked" && vehicle.status !== "completed") {
+      addEvent(`${vehicle.id} is ${vehicle.status} and cannot request charge yet.`, "request");
+      return null;
+    }
 
     const result = requestCharge(vehicle, sessionsRef.current, 0, energyKwh);
-    if (!result) return null;
+    if (!result) {
+      addEvent(`${vehicle.id} cannot request charge right now.`, "request");
+      return null;
+    }
 
     const nextVehicles = vehiclesRef.current.map((item) => (item.id === vehicle.id ? result.vehicle : item));
     vehiclesRef.current = nextVehicles;
@@ -345,7 +475,37 @@ export default function Home() {
   }
 
   function handlePrimaryVehicleAction() {
-    if (!selectedVehicle || demoMode !== "idle") return;
+    if (!selectedVehicle) {
+      addEvent("Select an occupied bay before requesting charge.", "dispatch");
+      return;
+    }
+    if (useBackend) {
+      const latest = getLatestSessionForVehicle(selectedVehicle.id, sessions);
+      const action = getSelectedVehicleAction(
+        selectedVehicle,
+        latest,
+        robots.find((r) => r.id === selectedVehicle.assignedRobotId) ?? null,
+        Boolean(
+          (selectedVehicle.status === "waiting" || selectedVehicle.status === "backup-needed")
+          && selectBestRobot(robots, selectedVehicle, spots, DOCK_BAYS, { laneBlocked }),
+        ),
+        autoDispatch,
+      );
+      if (action.actionType === "request" || action.actionType === "new-request") {
+        void runApi(() => api.createJob(selectedVehicle.id));
+      } else if (action.actionType === "dispatch" || action.actionType === "backup") {
+        void runApi(() => api.dispatchVehicle(selectedVehicle.id));
+      } else if (action.actionType === "fault") {
+        const robot = robots.find((r) => r.id === selectedVehicle.assignedRobotId);
+        if (robot) void runApi(() => api.faultRobot(robot.id));
+      }
+      // Disabled actions: no spam events — button already communicates state.
+      return;
+    }
+    if (demoMode !== "idle") {
+      addEvent("Manual job actions are paused while the local demo is running.", "dispatch");
+      return;
+    }
     const latest = getLatestSessionForVehicle(selectedVehicle.id, sessions);
     const canDispatchNow = Boolean(
       (selectedVehicle.status === "waiting" || selectedVehicle.status === "backup-needed")
@@ -356,30 +516,41 @@ export default function Home() {
       latest,
       robots.find((r) => r.id === selectedVehicle.assignedRobotId) ?? null,
       canDispatchNow,
+      autoDispatch,
     );
 
     switch (action.actionType) {
       case "request":
       case "new-request": {
         const request = requestChargeFor(selectedVehicle);
-        if (request && autoDispatch) dispatchVehicle(request);
+        if (request && autoDispatch) {
+          const decision = dispatchVehicle(request);
+          if (!decision) addEvent(`No eligible robot available for ${request.id}.`, "dispatch");
+        }
         break;
       }
       case "dispatch":
-      case "backup":
-        dispatchVehicle(selectedVehicle);
+      case "backup": {
+        const decision = dispatchVehicle(selectedVehicle);
+        if (!decision) addEvent(`No eligible robot available for ${selectedVehicle.id}.`, "dispatch");
         break;
+      }
       case "fault": {
         const robot = robots.find((r) => r.id === selectedVehicle.assignedRobotId);
         if (robot) simulateFault(robot);
         break;
       }
       default:
+        if (action.disabled) addEvent(`${selectedVehicle.id}: ${action.label}.`, "dispatch");
         break;
     }
   }
 
   function simulateFault(robot: Robot, faultType: FaultType = "connector_timeout", forceReassign = false) {
+    if (useBackend) {
+      void runApi(() => api.faultRobot(robot.id, faultType));
+      return;
+    }
     if (robot.status === "faulted" || demoMode !== "idle") return;
     const vehicleId = robot.assignedVehicleId;
     const label = FAULT_TYPE_LABELS[faultType];
@@ -422,6 +593,10 @@ export default function Home() {
   }
 
   function handleClearFault(robotId: string) {
+    if (useBackend) {
+      void runApi(() => api.clearFault(robotId));
+      return;
+    }
     const result = clearFault(robotId, robots, DOCK_BAYS, laneBlocked);
     if (!result) return;
     setRobots(result.robots);
@@ -429,6 +604,10 @@ export default function Home() {
   }
 
   function toggleDispatchMode() {
+    if (useBackend) {
+      void runApi(() => api.toggleDispatch());
+      return;
+    }
     if (demoMode !== "idle") return;
     const nextMode = !autoDispatch;
     setAutoDispatch(nextMode);
@@ -437,17 +616,6 @@ export default function Home() {
       const waiting = vehicles.find((v) => v.status === "waiting" || v.status === "backup-needed");
       if (waiting) dispatchVehicle({ ...waiting, status: "waiting" });
     }
-  }
-
-  function toggleLaneBlock() {
-    if (demoMode === "running") return;
-    const next = !laneBlocked;
-    setLaneBlocked(next);
-    if (simStateRef.current) simStateRef.current = { ...simStateRef.current, laneBlocked: next };
-    addEvent(
-      next ? `Lane block detected near ${LANE_BLOCK_ZONE.label}. Routing adjusted.` : `Lane block near ${LANE_BLOCK_ZONE.label} cleared`,
-      "dispatch",
-    );
   }
 
   function restoreIdleState() {
@@ -472,6 +640,10 @@ export default function Home() {
   }
 
   function startDemo() {
+    if (useBackend) {
+      void runApi(() => api.startDemo());
+      return;
+    }
     resetVehicleCounter(9000);
     const snapshot = createDemoResetState();
     const simState = createInitialSimState(snapshot.robots, snapshot.spots, {
@@ -499,6 +671,10 @@ export default function Home() {
   }
 
   function pauseDemo() {
+    if (useBackend) {
+      void runApi(() => api.pauseDemo());
+      return;
+    }
     if (demoMode !== "running") return;
     setDemoMode("paused");
     if (simStateRef.current) simStateRef.current = { ...simStateRef.current, demoMode: "paused" };
@@ -506,6 +682,10 @@ export default function Home() {
   }
 
   function resumeDemo() {
+    if (useBackend) {
+      void runApi(() => api.resumeDemo());
+      return;
+    }
     if (demoMode !== "paused") return;
     setDemoMode("running");
     if (simStateRef.current) simStateRef.current = { ...simStateRef.current, demoMode: "running" };
@@ -513,6 +693,10 @@ export default function Home() {
   }
 
   function endDemo() {
+    if (useBackend) {
+      void runApi(() => api.endDemo());
+      return;
+    }
     if (demoMode !== "running" && demoMode !== "paused") return;
     setDemoMode("ended");
     if (simStateRef.current) simStateRef.current = { ...simStateRef.current, demoMode: "ended" };
@@ -520,6 +704,10 @@ export default function Home() {
   }
 
   function resetScenario() {
+    if (useBackend) {
+      void runApi(() => api.resetDemo());
+      return;
+    }
     setDemoMode("idle");
     restoreIdleState();
   }
@@ -553,7 +741,12 @@ export default function Home() {
     selectedSession,
     assignedRobot,
     canDispatch,
+    autoDispatch,
   );
+  const queueDepth = sessions.filter((s) => s.status === "queued" || s.status === "interrupted").length;
+  const chargeDecision = selectedVehicle
+    ? describeChargeDecision(selectedVehicle, selectedSession, queueDepth)
+    : null;
   const canFault = Boolean(
     assignedRobot && (assignedRobot.status === "en-route" || assignedRobot.status === "charging"),
   );
@@ -564,9 +757,8 @@ export default function Home() {
       <Header
         autoDispatch={autoDispatch}
         demoMode={demoMode}
-        laneBlocked={laneBlocked}
         canSimulateFault={canFault}
-        primaryDisabled={primaryAction.disabled}
+        primaryDisabled={primaryAction.disabled || actionPending}
         primaryLabel={primaryAction.label}
         activeJobCount={activeJobCount}
         onRunDemo={startDemo}
@@ -577,10 +769,9 @@ export default function Home() {
         onToggleDispatchMode={toggleDispatchMode}
         onPrimaryAction={handlePrimaryVehicleAction}
         onSimulateFault={() => assignedRobot && simulateFault(assignedRobot)}
-        onToggleLaneBlock={toggleLaneBlock}
       />
       <main className="mx-auto grid min-h-0 w-full max-w-[1440px] flex-1 grid-cols-1 gap-2 overflow-y-auto p-3 lg:grid-cols-12 lg:overflow-hidden xl:px-6">
-        <div className="grid min-h-[620px] gap-2 lg:col-span-8 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_132px]">
+        <div className="grid min-h-[620px] gap-2 lg:col-span-8 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_168px]">
           <GarageMap
             spots={spots}
             vehicles={vehicles}
@@ -590,6 +781,7 @@ export default function Home() {
             autoDispatch={autoDispatch}
             demoMode={demoMode}
             dockOccupancy={operationsMetrics.dockOccupancy}
+            dockBays={dockBays}
             laneBlocked={laneBlocked}
             onSelectSpot={setSelectedSpotId}
           />
@@ -609,6 +801,8 @@ export default function Home() {
             routeRemainingMeters={routeRemainingMeters}
             telemetryAgeSeconds={telemetryAgeSeconds}
             action={primaryAction}
+            actionPending={actionPending}
+            chargeDecision={chargeDecision}
             onPrimaryAction={handlePrimaryVehicleAction}
           />
           <DispatchPanel

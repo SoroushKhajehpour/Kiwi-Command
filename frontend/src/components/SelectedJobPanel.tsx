@@ -3,6 +3,7 @@
 import { Battery, Bot, MapPin, Zap } from "lucide-react";
 import { DEMO_CHARGING_KWH_PER_SECOND } from "@/lib/charging";
 import { formatEta, formatHeading, formatKwh, formatMeters, formatPercent } from "@/lib/format";
+import type { ChargeDecisionView } from "@/lib/ops/chargeDecision";
 import { ROBOT_METERS_PER_SECOND } from "@/lib/routes";
 import type { SelectedVehicleAction } from "@/lib/vehicleActions";
 import type { ChargingSession, Robot, Vehicle } from "@/lib/types";
@@ -17,6 +18,8 @@ interface SelectedJobPanelProps {
   routeRemainingMeters: number | null;
   telemetryAgeSeconds: number;
   action: SelectedVehicleAction;
+  actionPending?: boolean;
+  chargeDecision?: ChargeDecisionView | null;
   onPrimaryAction: () => void;
 }
 
@@ -38,6 +41,8 @@ export function SelectedJobPanel({
   routeRemainingMeters,
   telemetryAgeSeconds,
   action,
+  actionPending = false,
+  chargeDecision = null,
   onPrimaryAction,
 }: SelectedJobPanelProps) {
   if (!vehicle) {
@@ -56,7 +61,10 @@ export function SelectedJobPanel({
   const isActiveJob = vehicle.status === "assigned" || vehicle.status === "charging";
   const showLiveTelemetry = Boolean(robot && isActiveJob);
   const moving = robot?.status === "en-route" || robot?.status === "returning";
-  const requestedKwh = session?.requestedKwh ?? vehicle.requestedEnergyKwh;
+  const targetBattery = chargeDecision?.targetBattery ?? vehicle.targetBattery;
+  const requestedKwh = chargeDecision?.requestedKwh
+    ?? session?.requestedKwh
+    ?? vehicle.requestedEnergyKwh;
   const deliveredLabel = session
     ? `${formatKwh(session.energyKwh)} / ${formatKwh(session.requestedKwh)}`
     : "—";
@@ -81,15 +89,22 @@ export function SelectedJobPanel({
         <div className="px-4 py-2">
           <div className="flex items-center justify-between text-[10px]">
             <span className="flex items-center gap-1.5 text-muted"><Battery className="h-3 w-3" /> State of charge</span>
-            <strong className="font-mono">{formatPercent(vehicle.battery)}</strong>
+            <strong className="font-mono">
+              {formatPercent(vehicle.battery)}
+              <span className="ml-1 font-sans font-medium text-muted">→ {formatPercent(targetBattery)}</span>
+            </strong>
           </div>
           <div className="mt-1.5 h-1.5 bg-surface">
             <div className={`h-full ${batteryBarColor(vehicle.battery)}`} style={{ width: `${Math.min(100, Math.max(0, vehicle.battery))}%` }} />
           </div>
+          {chargeDecision && (
+            <p className="mt-1.5 text-[10px] leading-snug text-muted">{chargeDecision.reason}</p>
+          )}
         </div>
 
         <div className="px-4">
           <DataRow label="Location" value={<span className="inline-flex items-center gap-1 font-mono"><MapPin className="h-3 w-3 text-muted" />{vehicle.spotId ?? "In transit"}</span>} />
+          <DataRow label="Priority" value={vehicle.priority} />
           <DataRow
             label="Requested"
             value={
@@ -134,14 +149,14 @@ export function SelectedJobPanel({
         <button
           type="button"
           onClick={onPrimaryAction}
-          disabled={action.disabled}
+          disabled={action.disabled || actionPending}
           className={`w-full rounded-md px-3 py-1.5 text-[10px] font-bold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-300 ${
             action.variant === "danger"
               ? "bg-error hover:bg-red-600"
               : "bg-foreground hover:bg-black"
           }`}
         >
-          {action.label}
+          {actionPending ? "Working…" : action.label}
         </button>
       </div>
     </section>

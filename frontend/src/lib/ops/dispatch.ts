@@ -124,14 +124,28 @@ export function dispatchNextJob(
   spots: ParkingSpot[],
   dockBays: DockBay[],
   currentTick: number,
-  options?: { laneBlocked?: boolean; reassignment?: boolean },
+  options?: { laneBlocked?: boolean; reassignment?: boolean; preferredVehicleId?: string },
 ): {
   vehicle: Vehicle;
   session: ChargingSession;
   decision: DispatchDecision;
   jobExplanation: JobPriorityExplanation;
 } | null {
-  const next = selectNextJobToDispatch(vehicles, sessions, currentTick);
+  let next = selectNextJobToDispatch(vehicles, sessions, currentTick);
+  if (options?.preferredVehicleId) {
+    const preferredSession = sessions.find((session) => (
+      session.vehicleId === options.preferredVehicleId
+      && (session.status === "queued" || session.status === "interrupted")
+    ));
+    const preferredVehicle = vehicles.find((vehicle) => vehicle.id === options.preferredVehicleId);
+    if (preferredSession && preferredVehicle) {
+      next = {
+        vehicle: preferredVehicle,
+        session: preferredSession,
+        explanation: explainJobPriority(preferredVehicle, preferredSession, currentTick),
+      };
+    }
+  }
   if (!next) return null;
 
   const decision = selectBestRobot(

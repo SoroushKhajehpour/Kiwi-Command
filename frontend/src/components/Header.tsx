@@ -7,7 +7,6 @@ import { SIMULATION_TIME_SCALE } from "@/lib/ops/constants";
 interface HeaderProps {
   autoDispatch: boolean;
   demoMode: DemoMode;
-  laneBlocked: boolean;
   canSimulateFault: boolean;
   primaryDisabled: boolean;
   primaryLabel: string;
@@ -20,13 +19,36 @@ interface HeaderProps {
   onToggleDispatchMode: () => void;
   onPrimaryAction: () => void;
   onSimulateFault: () => void;
-  onToggleLaneBlock: () => void;
+}
+
+function abbreviatePrimary(label: string): string {
+  switch (label) {
+    case "Request New Charge":
+      return "New Charge";
+    case "Send Backup Robot":
+      return "Backup";
+    case "Dispatch Robot":
+      return "Dispatch";
+    case "Simulate Robot Fault":
+      return "Fault Job";
+    case "Job In Progress":
+      return "In Progress";
+    case "Waiting for dispatch":
+      return "Queued";
+    case "Select Vehicle":
+      return "Select vehicle";
+    case "Unavailable":
+      return "Unavailable";
+    case "Request Charge":
+      return "Request";
+    default:
+      return label.length > 14 ? `${label.slice(0, 12)}…` : label;
+  }
 }
 
 export function Header({
   autoDispatch,
   demoMode,
-  laneBlocked,
   canSimulateFault,
   primaryDisabled,
   primaryLabel,
@@ -39,7 +61,6 @@ export function Header({
   onToggleDispatchMode,
   onPrimaryAction,
   onSimulateFault,
-  onToggleLaneBlock,
 }: HeaderProps) {
   const ctrl =
     "rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.04em] text-muted transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
@@ -55,18 +76,6 @@ export function Header({
       : demoMode === "ended"
         ? "ENDED"
         : "LIVE";
-
-  const abbrevPrimary = primaryLabel === "Request New Charge"
-    ? "New Charge"
-    : primaryLabel === "Send Backup Robot"
-      ? "Backup"
-      : primaryLabel === "Dispatch Robot"
-        ? "Dispatch"
-        : primaryLabel === "Simulate Robot Fault"
-          ? "Fault Job"
-          : primaryLabel === "Job In Progress"
-            ? "In Progress"
-            : "Request";
 
   return (
     <header className="shrink-0 border-b border-border bg-white">
@@ -129,28 +138,19 @@ export function Header({
               End Demo
             </button>
           )}
+          <button
+            type="button"
+            onClick={onPrimaryAction}
+            disabled={primaryDisabled}
+            className={ctrl}
+            title={primaryLabel}
+          >
+            {abbreviatePrimary(primaryLabel)}
+          </button>
           {!isDemoActive && (
-            <>
-              <button
-                type="button"
-                onClick={onPrimaryAction}
-                disabled={primaryDisabled}
-                className={ctrl}
-                title={primaryLabel}
-              >
-                {abbrevPrimary}
-              </button>
-              <button type="button" onClick={onSimulateFault} disabled={!canSimulateFault} className={ctrl}>
-                Fault
-              </button>
-              <button
-                type="button"
-                onClick={onToggleLaneBlock}
-                className={`${ctrl} ${laneBlocked ? "bg-red-50 text-error" : ""}`}
-              >
-                {laneBlocked ? "Unblock" : "Block Lane"}
-              </button>
-            </>
+            <button type="button" onClick={onSimulateFault} disabled={!canSimulateFault} className={ctrl}>
+              Fault
+            </button>
           )}
           <button type="button" onClick={onResetScenario} className={ctrl}>
             Reset

@@ -5,6 +5,7 @@ import {
   nearestDockDistanceMeters,
   routeDistanceMeters,
 } from "./routes";
+import { formatEta } from "./format";
 import type { DockBay, GaragePosition, ParkingSpot, Robot, Vehicle } from "./types";
 
 const ROBOT_CAPACITY_KWH = 100;
@@ -26,6 +27,8 @@ export interface DispatchDecision {
   vehicleId: string;
   selectedRobotId: string;
   selectedScore: number;
+  selectedBattery: number;
+  requestedEnergyKwh: number;
   distanceMeters: number;
   returnDistanceMeters: number;
   etaSeconds: number;
@@ -35,10 +38,17 @@ export interface DispatchDecision {
   candidateScores: CandidateScore[];
 }
 
+export interface DispatchOptions {
+  laneBlocked?: boolean;
+}
+
 function statusRejection(robot: Robot): string | null {
   if (robot.status === "faulted") return "faulted";
   if (robot.assignedVehicleId) return `already assigned to ${robot.assignedVehicleId}`;
-  if (robot.status !== "idle" && robot.status !== "docked") return robot.status.replace("-", " ");
+  if (robot.status === "charging") return "already charging";
+  if (robot.status === "returning") return "returning to dock";
+  if (robot.status === "en-route") return "already en route";
+  if (robot.status !== "idle" && robot.status !== "docked") return "unavailable";
   if (robot.battery < 20) return `battery critical at ${Math.round(robot.battery)}%`;
   return null;
 }
@@ -47,6 +57,10 @@ function batteryPenalty(battery: number): number {
   if (battery < 35) return 50;
   if (battery < 50) return 20;
   return 0;
+}
+
+function statusPenalty(robot: Robot): number {
+  return robot.status === "docked" ? 0 : 2;
 }
 
 function deliverableEnergyKwh(robot: Robot, travelMeters: number): number {
@@ -59,6 +73,7 @@ export function selectBestRobot(
   vehicle: Vehicle,
   spots: ParkingSpot[],
   dockBays: DockBay[],
+  options: DispatchOptions = {},
 ): DispatchDecision | null {
   const spot = spots.find((item) => item.id === vehicle.spotId);
   if (!spot) return null;
@@ -81,7 +96,7 @@ export function selectBestRobot(
       continue;
     }
 
-    const route = buildRouteToVehicle(robot.position, spot);
+    const route = buildRouteToVehicle(robot.position, spot, { laneBlocked: options.laneBlocked });
     const distanceMeters = routeDistanceMeters(robot.position, route);
     const servicePoint = getVehicleServicePoint(spot);
     const returnDistanceMeters = nearestDockDistanceMeters(servicePoint, dockBays);
@@ -96,11 +111,14 @@ export function selectBestRobot(
       continue;
     }
 
+    const energyFeasibilityPenalty = deliverableKwh < requestedKwh + 4 ? 12 : 0;
     const distanceWeight = vehicle.priority === "Urgent" ? 1.6 : 1.2;
     const priorityAdjustment = vehicle.priority === "Urgent" ? -8 : 0;
     const score = distanceMeters * distanceWeight
       + returnDistanceMeters * 0.25
       + batteryPenalty(robot.battery)
+      + energyFeasibilityPenalty
+      + statusPenalty(robot)
       + priorityAdjustment;
 
     eligible.push({
@@ -126,15 +144,20 @@ export function selectBestRobot(
     vehicleId: vehicle.id,
     selectedRobotId: selected.robot.id,
     selectedScore: selected.score,
+    selectedBattery: selected.robot.battery,
+    requestedEnergyKwh: requestedKwh,
     distanceMeters: selected.distanceMeters,
     returnDistanceMeters: selected.returnDistanceMeters,
     etaSeconds: selected.etaSeconds,
     route: selected.route,
     reasons: [
-      `${Math.round(selected.distanceMeters)}m route to ${vehicle.id}`,
-      `${Math.round(selected.robot.battery)}% battery covers ${requestedKwh.toFixed(1)} kWh`,
-      `${selected.robot.status === "docked" ? "Ready in dock bay" : "Idle and unassigned"}`,
-      `${Math.round(selected.returnDistanceMeters)}m return route to dock`,
+      `${Math.round(selected.distanceMeters)}m route to ${vehicle.spotId}`,
+      `ETA ${formatEta(selected.etaSeconds)}`,
+      `${Math.round(selected.robot.battery)}% battery`,
+      selected.robot.status === "docked"
+        ? `Ready in ${selected.robot.dockBayId ?? "dock"}`
+        : "Idle and unassigned",
+      `Can complete ${requestedKwh.toFixed(1)} kWh and return to dock`,
     ],
     rejectedRobots,
     candidateScores: eligible.map((candidate) => ({

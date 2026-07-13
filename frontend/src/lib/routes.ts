@@ -5,6 +5,17 @@ export const ROBOT_METERS_PER_SECOND = 1.4;
 export const DEMO_ROBOT_MAP_UNITS_PER_SECOND = 14;
 const LANE_CENTER_Y = 50;
 
+/** Blocked stretch of the main lane near P2-18. */
+export const LANE_BLOCK_ZONE = {
+  label: "P2-18",
+  x: 52,
+  y: 50,
+  width: 12,
+  height: 9,
+  xMin: 45,
+  xMax: 59,
+};
+
 export function calculateDistance(a: GaragePosition, b: GaragePosition): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
@@ -34,8 +45,29 @@ export function getVehicleConnectionPoint(spot: ParkingSpot): GaragePosition {
   };
 }
 
-export function buildRouteToVehicle(from: GaragePosition, spot: ParkingSpot): GaragePosition[] {
+function laneTravelCrossesBlock(fromX: number, toX: number): boolean {
+  const minX = Math.min(fromX, toX);
+  const maxX = Math.max(fromX, toX);
+  return minX < LANE_BLOCK_ZONE.xMax && maxX > LANE_BLOCK_ZONE.xMin;
+}
+
+export function buildRouteToVehicle(
+  from: GaragePosition,
+  spot: ParkingSpot,
+  options?: { laneBlocked?: boolean },
+): GaragePosition[] {
   const servicePoint = getVehicleServicePoint(spot);
+
+  if (options?.laneBlocked && laneTravelCrossesBlock(from.x, servicePoint.x)) {
+    return cleanRoute(from, [
+      { x: from.x, y: LANE_CENTER_Y },
+      { x: 30, y: LANE_CENTER_Y },
+      { x: 30, y: 68 },
+      { x: servicePoint.x, y: 68 },
+      servicePoint,
+    ]);
+  }
+
   return cleanRoute(from, [
     { x: from.x, y: LANE_CENTER_Y },
     { x: servicePoint.x, y: LANE_CENTER_Y },
@@ -43,7 +75,22 @@ export function buildRouteToVehicle(from: GaragePosition, spot: ParkingSpot): Ga
   ]);
 }
 
-export function buildRouteToDock(from: GaragePosition, bay: DockBay): GaragePosition[] {
+export function buildRouteToDock(
+  from: GaragePosition,
+  bay: DockBay,
+  options?: { laneBlocked?: boolean },
+): GaragePosition[] {
+  if (options?.laneBlocked && laneTravelCrossesBlock(from.x, bay.position.x)) {
+    return cleanRoute(from, [
+      { x: from.x, y: LANE_CENTER_Y },
+      { x: 30, y: LANE_CENTER_Y },
+      { x: 30, y: 68 },
+      { x: bay.position.x, y: 68 },
+      { x: bay.position.x, y: LANE_CENTER_Y },
+      bay.position,
+    ]);
+  }
+
   return cleanRoute(from, [
     { x: from.x, y: LANE_CENTER_Y },
     { x: bay.position.x, y: LANE_CENTER_Y },

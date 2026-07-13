@@ -1,4 +1,5 @@
 import type { ChargingSession, Vehicle } from "./types";
+import { roundKwh } from "./vehicleActions";
 
 export const DEMO_CHARGING_KWH_PER_SECOND = 0.7;
 const VEHICLE_BATTERY_CAPACITY_KWH = 75;
@@ -13,16 +14,19 @@ export function advanceCharging(
   session: ChargingSession,
   elapsedSeconds: number,
 ): { vehicle: Vehicle; session: ChargingSession; deliveredKwh: number; complete: boolean } {
-  const remaining = Math.max(0, session.requestedKwh - session.energyKwh);
+  const requested = session.requestedKwh;
+  const remaining = Math.max(0, requested - session.energyKwh);
   const deliveredKwh = Math.min(remaining, DEMO_CHARGING_KWH_PER_SECOND * elapsedSeconds);
-  const energyKwh = session.energyKwh + deliveredKwh;
+  const rawEnergy = session.energyKwh + deliveredKwh;
+  const complete = rawEnergy >= requested - 0.0001;
+  const energyKwh = complete ? roundKwh(requested) : roundKwh(Math.min(rawEnergy, requested));
   const batteryGain = deliveredKwh / VEHICLE_BATTERY_CAPACITY_KWH * 100;
-  const complete = energyKwh >= session.requestedKwh - 0.001;
 
   return {
     vehicle: {
       ...vehicle,
       battery: Math.min(100, vehicle.battery + batteryGain),
+      // Keep assignedRobotId until completion handler clears it for history consistency.
       status: complete ? "completed" : "charging",
       assignedRobotId: complete ? null : vehicle.assignedRobotId,
     },
@@ -32,7 +36,7 @@ export function advanceCharging(
       status: complete ? "completed" : "active",
       etaSeconds: complete ? null : calculateChargingEta({ ...session, energyKwh }),
     },
-    deliveredKwh,
+    deliveredKwh: roundKwh(deliveredKwh),
     complete,
   };
 }

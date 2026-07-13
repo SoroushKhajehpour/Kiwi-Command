@@ -2,7 +2,7 @@
 
 import { Activity } from "lucide-react";
 import { COLUMN_POSITIONS, DOCK_BAYS, GARAGE_LEVEL, GARAGE_NAME } from "@/lib/mockData";
-import { getVehicleConnectionPoint } from "@/lib/routes";
+import { getVehicleConnectionPoint, LANE_BLOCK_ZONE } from "@/lib/routes";
 import type { FleetMetric, ParkingSpot, Robot, Vehicle } from "@/lib/types";
 import { RobotMarker } from "./RobotMarker";
 import { VehicleMarker } from "./VehicleMarker";
@@ -15,6 +15,7 @@ interface GarageMapProps {
   selectedSpotId: string | null;
   autoDispatch: boolean;
   dockOccupancy: number;
+  laneBlocked?: boolean;
   onSelectSpot: (spotId: string) => void;
 }
 
@@ -39,6 +40,7 @@ export function GarageMap({
   selectedSpotId,
   autoDispatch,
   dockOccupancy,
+  laneBlocked = false,
   onSelectSpot,
 }: GarageMapProps) {
   const vehicleById = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
@@ -63,6 +65,7 @@ export function GarageMap({
           <span>Network <strong className="font-semibold text-kiwi-dark">Simulation live</strong></span>
           <span>Dock <strong className="font-semibold text-foreground">{dockOccupancy}/{DOCK_BAYS.length}</strong></span>
           <span>Mode <strong className="font-semibold text-foreground">{autoDispatch ? "AUTO" : "MANUAL"}</strong></span>
+          {laneBlocked && <span className="font-semibold text-error">Lane blocked</span>}
         </div>
       </div>
 
@@ -93,6 +96,22 @@ export function GarageMap({
         <span className="absolute left-[46%] top-[53%] z-10 font-mono text-[8px] tracking-[0.12em] text-gray-500">P2 MAIN LANE</span>
 
         {[24, 50, 76].map((x) => <LaneArrow key={x} x={x} />)}
+
+        {laneBlocked && (
+          <div
+            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-1/2 border border-dashed border-error/60 bg-red-500/10"
+            style={{
+              left: `${LANE_BLOCK_ZONE.x}%`,
+              top: `${LANE_BLOCK_ZONE.y}%`,
+              width: `${LANE_BLOCK_ZONE.width}%`,
+              height: `${LANE_BLOCK_ZONE.height}%`,
+            }}
+          >
+            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-mono text-[7px] font-bold tracking-[0.1em] text-error/80">
+              BLOCKED
+            </span>
+          </div>
+        )}
 
         {COLUMN_POSITIONS.map((column, index) => (
           <div

@@ -88,6 +88,7 @@ export const INITIAL_ROBOTS: Robot[] = [
     heading: 0,
     dockBayId: "dock-1",
     assignedVehicleId: null,
+    faultType: null,
   },
   {
     id: "R-02",
@@ -101,6 +102,7 @@ export const INITIAL_ROBOTS: Robot[] = [
     heading: 0,
     dockBayId: null,
     assignedVehicleId: "EV-2054",
+    faultType: null,
   },
   {
     id: "R-03",
@@ -114,6 +116,7 @@ export const INITIAL_ROBOTS: Robot[] = [
     heading: 270,
     dockBayId: "dock-2",
     assignedVehicleId: null,
+    faultType: null,
   },
 ];
 

@@ -6,11 +6,31 @@
 
 export type RobotStatus = "idle" | "docked" | "en-route" | "charging" | "returning" | "faulted";
 
-export type VehicleStatus = "parked" | "waiting" | "assigned" | "charging" | "completed";
+export type VehicleStatus =
+  | "parked"
+  | "waiting"
+  | "assigned"
+  | "charging"
+  | "completed"
+  | "backup-needed";
 
-export type SessionStatus = "queued" | "active" | "completed";
+export type SessionStatus =
+  | "queued"
+  | "assigned"
+  | "en_route"
+  | "active"
+  | "completed"
+  | "interrupted"
+  | "cancelled";
 
 export type VehiclePaint = "white" | "black" | "charcoal" | "silver" | "blue" | "green";
+
+export type FaultType =
+  | "connector_timeout"
+  | "blocked_route"
+  | "low_battery"
+  | "vehicle_handshake_failed"
+  | "robot_offline";
 
 /** Position on the garage canvas, in percentages (0–100) of its width/height. */
 export interface GaragePosition {
@@ -32,6 +52,7 @@ export interface Robot {
   dockBayId: string | null;
   /** Vehicle this robot is currently serving, if any. */
   assignedVehicleId: string | null;
+  faultType: FaultType | null;
 }
 
 export interface Vehicle {

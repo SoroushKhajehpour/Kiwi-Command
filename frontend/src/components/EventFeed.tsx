@@ -8,7 +8,7 @@ export function EventFeed({ events }: { events: EventLogItem[] }) {
         <span className="text-[8px] text-muted">Garage local time</span>
       </div>
       <div className="min-h-0 flex-1 divide-y divide-border overflow-hidden px-4">
-        {events.slice(0, 5).map((event) => (
+        {events.slice(0, 7).map((event) => (
           <div key={event.id} className="grid grid-cols-[36px_1fr] items-center py-2 text-[9px]">
             <time className="font-mono text-muted">{event.timestamp}</time>
             <p className="truncate font-medium">{event.message}</p>

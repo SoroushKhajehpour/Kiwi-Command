@@ -24,7 +24,9 @@ export function deriveOperationsMetrics(
   const activeJobs = vehicles.filter((vehicle) => (
     vehicle.status === "assigned" || vehicle.status === "charging"
   )).length;
-  const queueDepth = sessions.filter((session) => session.status === "queued" && !session.robotId).length;
+  const queueDepth = sessions.filter((session) => (
+    session.status === "queued" || session.status === "interrupted"
+  )).length;
   const enRouteEtas = robots
     .filter((robot) => robot.status === "en-route")
     .map((robot) => etaSecondsForRoute(robot.position, robot.route, robot.routeIndex));

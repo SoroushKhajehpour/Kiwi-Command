@@ -18,12 +18,17 @@ export const VEHICLE_STATUS_META: Record<VehicleStatus, { label: string; tone: P
   assigned: { label: "Robot assigned", tone: "kiwi", pulse: true },
   charging: { label: "Charging", tone: "kiwi", pulse: true },
   completed: { label: "Charge complete", tone: "kiwi" },
+  "backup-needed": { label: "Backup needed", tone: "red", pulse: true },
 };
 
 export const SESSION_STATUS_META: Record<SessionStatus, { label: string; tone: PillTone; pulse?: boolean }> = {
   queued: { label: "Queued", tone: "amber" },
+  assigned: { label: "Assigned", tone: "kiwi" },
+  en_route: { label: "En route", tone: "amber", pulse: true },
   active: { label: "Active", tone: "kiwi", pulse: true },
   completed: { label: "Completed", tone: "neutral" },
+  interrupted: { label: "Interrupted", tone: "red" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
 };
 
 /** Battery bar color: red under 20%, amber under 40%, kiwi otherwise. */

@@ -5,7 +5,18 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from app.config import GARAGE_ENTRANCE, GARAGE_EXIT, LANE_BLOCK_ZONE, LANE_CENTER_Y, METERS_PER_MAP_UNIT, ROBOT_METERS_PER_SECOND
+from app.config import (
+    BOTTOM_ROW_LANE_Y,
+    BOTTOM_ROW_SERVICE_Y,
+    GARAGE_ENTRANCE,
+    GARAGE_EXIT,
+    LANE_BLOCK_ZONE,
+    LANE_CENTER_Y,
+    METERS_PER_MAP_UNIT,
+    ROBOT_METERS_PER_SECOND,
+    TOP_ROW_LANE_Y,
+    TOP_ROW_SERVICE_Y,
+)
 from app.schemas import DockBay, ParkingSpot, Position, Robot, RobotStatus
 
 ServiceSide = Literal["left", "right"]
@@ -13,6 +24,24 @@ ServiceSide = Literal["left", "right"]
 
 def calculate_distance(a: Position, b: Position) -> float:
     return math.hypot(a.x - b.x, a.y - b.y)
+
+
+def aisle_y_for_row(row: str) -> float:
+    return TOP_ROW_LANE_Y if row == "top" else BOTTOM_ROW_LANE_Y
+
+
+def vehicle_lane_point(spot: ParkingSpot) -> Position:
+    """Aisle waypoint at spot X — outside bay paint for lateral travel."""
+    return Position(x=spot.position.x, y=aisle_y_for_row(spot.row))
+
+
+def assert_orthogonal_route(route: list[Position]) -> bool:
+    """True when consecutive waypoints share an axis (no diagonals)."""
+    for i in range(1, len(route)):
+        a, b = route[i - 1], route[i]
+        if abs(a.x - b.x) > 0.05 and abs(a.y - b.y) > 0.05:
+            return False
+    return True
 
 
 def heading_to_first_segment(from_pos: Position, route: list[Position]) -> float:
@@ -37,9 +66,9 @@ def _clean_route(from_pos: Position, points: list[Position]) -> list[Position]:
 
 
 def get_vehicle_service_point(spot: ParkingSpot, side: ServiceSide = "right") -> Position:
-    """Lane-side service bays: left or right of the parked car (no overlap)."""
-    y = 28 if spot.row == "top" else 72
-    offset = -4.5 if side == "left" else 4.5
+    """Stand beside the car on the lane edge — close enough for a short charge cable."""
+    y = TOP_ROW_SERVICE_Y if spot.row == "top" else BOTTOM_ROW_SERVICE_Y
+    offset = -3.2 if side == "left" else 3.2
     return Position(x=spot.position.x + offset, y=y)
 
 
@@ -60,9 +89,9 @@ def choose_service_side(
             continue
         if robot.status not in (RobotStatus.faulted, RobotStatus.charging, RobotStatus.en_route):
             continue
-        if calculate_distance(robot.position, right) < 7.0:
+        if calculate_distance(robot.position, right) < 5.0:
             right_blocked = True
-        if calculate_distance(robot.position, left) < 7.0:
+        if calculate_distance(robot.position, left) < 5.0:
             left_blocked = True
 
     if right_blocked and not left_blocked:
@@ -76,12 +105,12 @@ def choose_service_side(
 
 def build_vehicle_entry_route(spot: ParkingSpot, entry: Position | None = None) -> list[Position]:
     start = entry or Position(**GARAGE_ENTRANCE)
-    approach_y = 28 if spot.row == "top" else 72
-    # Strict L-path: vertical into lane, horizontal, vertical into bay.
+    lane = vehicle_lane_point(spot)
+    # Strict L-path: main lane → aisle at spot x → plunge into bay.
     return _clean_route(start, [
         Position(x=start.x, y=LANE_CENTER_Y),
         Position(x=spot.position.x, y=LANE_CENTER_Y),
-        Position(x=spot.position.x, y=approach_y),
+        lane,
         spot.position,
     ])
 
@@ -93,11 +122,11 @@ def build_vehicle_exit_route(
 ) -> list[Position]:
     end = exit_pos or Position(**GARAGE_EXIT)
     start = from_pos or spot.position
-    approach_y = 28 if spot.row == "top" else 72
-    # Always leave vertically first (same x), then lane, then exit — never diagonal.
+    lane = vehicle_lane_point(spot)
+    # Always leave vertically to aisle first — never sideways through neighbor stalls.
     return _clean_route(start, [
-        Position(x=start.x, y=approach_y),
-        Position(x=spot.position.x, y=approach_y),
+        Position(x=start.x, y=lane.y),
+        lane,
         Position(x=spot.position.x, y=LANE_CENTER_Y),
         Position(x=end.x, y=LANE_CENTER_Y),
         end,
@@ -131,8 +160,8 @@ def build_route_to_vehicle(
 
 
 def build_route_to_dock(from_pos: Position, bay: DockBay, blocked_lane: bool = False) -> list[Position]:
-    # Lane travel, then vertical approach into the row-aligned bay.
-    approach_y = 28 if bay.position.y < LANE_CENTER_Y else 72
+    # Lane travel, then vertical approach into the bay.
+    approach_y = TOP_ROW_LANE_Y if bay.position.y < LANE_CENTER_Y else BOTTOM_ROW_LANE_Y
     return _clean_route(from_pos, [
         Position(x=from_pos.x, y=LANE_CENTER_Y),
         Position(x=bay.position.x, y=LANE_CENTER_Y),
@@ -146,7 +175,7 @@ def build_detour_around_robot(
     destination: Position,
     blocker: Position,
 ) -> list[Position]:
-    """Smooth orthogonal peel-off: slide to a parallel corridor, then resume."""
+    """Orthogonal peel-off: leave the blocker’s lane, pass, then resume."""
     # Prefer the corridor farther from the blocker relative to main lane.
     if abs(blocker.y - LANE_CENTER_Y) < 6:
         detour_y = 36.0 if destination.y <= LANE_CENTER_Y else 64.0
@@ -155,14 +184,17 @@ def build_detour_around_robot(
     else:
         detour_y = 36.0
 
-    # Soft first step: only a few units toward the parallel lane (no teleport feel).
-    step = 6.0 if detour_y > from_pos.y else -6.0
+    # When already overlapping / nose-to-nose, take a longer first step so
+    # the next tick actually clears the car envelope instead of soft-holding.
+    close = calculate_distance(from_pos, blocker) < 7.0
+    step_size = 12.0 if close else 6.0
+    step = step_size if detour_y > from_pos.y else -step_size
     mid_y = from_pos.y + step
-    # Don't overshoot the corridor on the first move.
     if (step > 0 and mid_y > detour_y) or (step < 0 and mid_y < detour_y):
         mid_y = detour_y
 
-    pass_x = blocker.x + (12.0 if destination.x >= from_pos.x else -12.0)
+    # Pass well clear of the vehicle footprint (cars are ~8 wide).
+    pass_x = blocker.x + (16.0 if destination.x >= from_pos.x else -16.0)
     pass_x = max(8.0, min(92.0, pass_x))
 
     return _clean_route(from_pos, [

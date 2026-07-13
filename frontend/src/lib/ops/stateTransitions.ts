@@ -385,7 +385,13 @@ export function clearFault(
 export function vehicleParks(
   vehicle: Vehicle,
   spot: ParkingSpot,
-): { vehicle: Vehicle; spot: ParkingSpot; event: EventLogItem } {
+): { vehicle: Vehicle; spot: ParkingSpot; event: EventLogItem } | null {
+  if (spot.occupiedVehicleId && spot.occupiedVehicleId !== vehicle.id) {
+    return null;
+  }
+  if (spot.reservedVehicleId && spot.reservedVehicleId !== vehicle.id) {
+    return null;
+  }
   const parked: Vehicle = {
     ...vehicle,
     status: "parked",
@@ -421,18 +427,30 @@ export function vehicleDeparts(
     status: "leaving",
     route: exitRoute,
     routeIndex: 0,
-    spotId: null,
+    spotId: spot.id,
   };
-  const clearedSpot: ParkingSpot = {
+  const heldSpot: ParkingSpot = {
     ...spot,
-    vehicleId: null,
-    occupiedVehicleId: null,
+    vehicleId: vehicle.id,
+    occupiedVehicleId: vehicle.id,
     reservedVehicleId: null,
   };
   return {
     vehicle: leaving,
-    spot: clearedSpot,
+    spot: heldSpot,
     event: createEvent(`${vehicle.id} departing garage.`, "departure"),
+  };
+}
+
+export function clearSpotAfterDeparture(spot: ParkingSpot, vehicleId: string): ParkingSpot {
+  if (spot.occupiedVehicleId !== vehicleId && spot.reservedVehicleId !== vehicleId) {
+    return spot;
+  }
+  return {
+    ...spot,
+    vehicleId: spot.occupiedVehicleId === vehicleId ? null : spot.vehicleId,
+    occupiedVehicleId: spot.occupiedVehicleId === vehicleId ? null : spot.occupiedVehicleId,
+    reservedVehicleId: spot.reservedVehicleId === vehicleId ? null : spot.reservedVehicleId,
   };
 }
 

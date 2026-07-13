@@ -9,6 +9,7 @@ from app.config import (
     ARRIVAL_DISTANCE_THRESHOLD,
     COMPLETED_DWELL_TICKS,
     DEMO_FAULT_AFTER_CHARGE_TICKS,
+    INVARIANT_CHECK_INTERVAL_TICKS,
     LANE_BLOCK_ZONE,
     LOW_ROBOT_BATTERY_THRESHOLD,
     MAX_ACTIVE_VEHICLES,
@@ -23,7 +24,15 @@ from app.dispatch import select_best_robot, select_next_job
 from app.events import add_event, add_event_once, add_event_with_cooldown
 from app.faults import apply_fault
 from app.movement import advance_robot, advance_vehicle
-from app.routing import build_route_to_dock, build_vehicle_exit_route, calculate_distance, get_available_dock_bay, occupied_dock_ids
+from app.routing import (
+    assert_orthogonal_route,
+    build_route_to_dock,
+    build_vehicle_entry_route,
+    build_vehicle_exit_route,
+    calculate_distance,
+    get_available_dock_bay,
+    occupied_dock_ids,
+)
 from app.schemas import DemoMode, FaultType, Robot, RobotStatus, SessionStatus, VehicleStatus
 from app.state import AppState
 from app.state_transitions import (
@@ -41,6 +50,7 @@ from app.vehicle_spawn import (
     count_active_vehicles,
     find_available_spot,
     find_spot_by_id,
+    get_available_planned_or_fallback_spot,
     reserve_spot,
     should_skip_arrival,
     spawn_vehicle,
@@ -100,13 +110,13 @@ def _maybe_spawn_vehicle(state: AppState) -> None:
             state.next_spawn_tick = state.tick + SPAWN_RETRY_COOLDOWN_TICKS
             return
 
-        preferred = find_spot_by_id(state.parking_spots, candidate["spot_id"])
-        if preferred and find_available_spot([preferred], state.vehicles) is not None:
-            target = preferred
+        # Planned bay taken → fallback to any free spot (do not skip forever).
+        target = get_available_planned_or_fallback_spot(
+            candidate["spot_id"], state.parking_spots, state.vehicles,
+        )
+        if target:
             plan = candidate
         else:
-            # Planned spot taken — skip this plan entry once, do not spam retries.
-            state.spawn_plan_index += 1
             state.next_spawn_tick = state.tick + SPAWN_RETRY_COOLDOWN_TICKS
             return
     else:
@@ -119,6 +129,9 @@ def _maybe_spawn_vehicle(state: AppState) -> None:
     vehicle_id = plan["id"] if plan else state.new_vehicle_id()
     vehicle = spawn_vehicle(target, state.tick, vehicle_id, plan=plan)
     reserved = reserve_spot(target, vehicle.id)
+    if not reserved:
+        state.next_spawn_tick = state.tick + SPAWN_RETRY_COOLDOWN_TICKS
+        return
     _update_spot(state, target.id, reserved)
     state.vehicles.append(vehicle)
     state.spawn_count += 1
@@ -166,32 +179,62 @@ def tick(state: AppState, elapsed_seconds: float) -> None:
                 updated_vehicles.append(vehicle)
                 continue
 
-            moved, arrived, yielded = advance_vehicle(vehicle, elapsed_seconds, state.robots, state.vehicles)
+            moved, arrived, yielded = advance_vehicle(
+                vehicle, elapsed_seconds, state.robots, state.vehicles, state.tick,
+            )
             if yielded:
                 updated_vehicles.append(vehicle)
                 continue
 
             updated = moved
+
+            # Free bay once the leaving car reaches the aisle (first exit waypoint).
+            if (
+                vehicle.status == VehicleStatus.leaving
+                and vehicle.spot_id
+                and updated.route_index >= 1
+            ):
+                spot = find_spot_by_id(state.parking_spots, vehicle.spot_id)
+                if spot and (spot.occupied_vehicle_id == vehicle.id or spot.reserved_vehicle_id == vehicle.id):
+                    _update_spot(state, spot.id, clear_spot_after_departure(spot, vehicle.id))
+                updated = updated.model_copy(update={"spot_id": None})
+
             if arrived:
                 if vehicle.status == VehicleStatus.entering:
                     entry_spot = find_spot_by_id(state.parking_spots, vehicle.spot_id or "")
-                    if entry_spot and (
-                        not entry_spot.occupied_vehicle_id
-                        or entry_spot.occupied_vehicle_id == vehicle.id
-                        or entry_spot.reserved_vehicle_id == vehicle.id
-                    ):
-                        parked, spot = vehicle_parks(updated, entry_spot)
-                        updated = parked
-                        _update_spot(state, entry_spot.id, spot)
-                        state.events = add_event_once(
-                            state.events,
-                            state.event_keys,
-                            f"parked:{vehicle.id}",
-                            state.tick,
-                            f"{vehicle.id} parked at {entry_spot.id} with {round(vehicle.battery)}% battery.",
-                            "arrival",
-                            related_vehicle_id=vehicle.id,
-                        )
+                    can_park = bool(
+                        entry_spot
+                        and (entry_spot.occupied_vehicle_id is None or entry_spot.occupied_vehicle_id == vehicle.id)
+                        and (entry_spot.reserved_vehicle_id is None or entry_spot.reserved_vehicle_id == vehicle.id)
+                    )
+                    if can_park and entry_spot:
+                        result = vehicle_parks(updated, entry_spot)
+                        if result:
+                            parked, spot = result
+                            updated = parked
+                            _update_spot(state, entry_spot.id, spot)
+                            state.events = add_event_once(
+                                state.events,
+                                state.event_keys,
+                                f"parked:{vehicle.id}",
+                                state.tick,
+                                f"{vehicle.id} parked at {entry_spot.id} with {round(vehicle.battery)}% battery.",
+                                "arrival",
+                                related_vehicle_id=vehicle.id,
+                            )
+                        else:
+                            # Occupied by another — rebuild entry toward any free spot.
+                            alt = find_available_spot(state.parking_spots, state.vehicles)
+                            if alt:
+                                reserved = reserve_spot(alt, vehicle.id)
+                                if reserved:
+                                    _update_spot(state, alt.id, reserved)
+                                    route = build_vehicle_entry_route(alt, updated.position)
+                                    updated = updated.model_copy(update={
+                                        "spot_id": alt.id,
+                                        "route": route,
+                                        "route_index": 0,
+                                    })
                 elif vehicle.status == VehicleStatus.leaving:
                     updated = updated.model_copy(update={
                         "status": VehicleStatus.departed,
@@ -735,6 +778,134 @@ def tick(state: AppState, elapsed_seconds: float) -> None:
     # Idle-mode manual simulation (robot movement + charging when not in demo)
     if state.demo_mode == DemoMode.idle:
         _tick_idle_manual(state, elapsed_seconds)
+
+    if is_running and state.tick % INVARIANT_CHECK_INTERVAL_TICKS == 0:
+        _check_parking_invariants(state)
+
+
+def _check_parking_invariants(state: AppState) -> None:
+    """Light occupancy / route checks with cooldown events + simple recovery."""
+    active = [v for v in state.vehicles if v.status != VehicleStatus.departed]
+
+    # Duplicate active spot_id assignments.
+    by_spot: dict[str, list[str]] = {}
+    for vehicle in active:
+        if not vehicle.spot_id:
+            continue
+        by_spot.setdefault(vehicle.spot_id, []).append(vehicle.id)
+    for spot_id, ids in by_spot.items():
+        if len(ids) < 2:
+            continue
+        state.events = add_event_with_cooldown(
+            state.events,
+            state.event_cooldowns,
+            f"invariant:dup-spot:{spot_id}",
+            YIELD_EVENT_COOLDOWN_TICKS,
+            state.tick,
+            f"Occupancy conflict at {spot_id}: {', '.join(ids)}.",
+            "dispatch",
+        )
+        # Keep first claim; clear extras' reservations and send them to exit if entering.
+        for extra_id in ids[1:]:
+            for i, vehicle in enumerate(state.vehicles):
+                if vehicle.id != extra_id:
+                    continue
+                if vehicle.status == VehicleStatus.entering:
+                    spot = find_spot_by_id(state.parking_spots, spot_id)
+                    alt = find_available_spot(state.parking_spots, state.vehicles)
+                    if alt:
+                        reserved = reserve_spot(alt, vehicle.id)
+                        if reserved:
+                            _update_spot(state, alt.id, reserved)
+                            route = build_vehicle_entry_route(alt, vehicle.position)
+                            state.vehicles[i] = vehicle.model_copy(update={
+                                "spot_id": alt.id,
+                                "route": route,
+                                "route_index": 0,
+                            })
+                    elif spot:
+                        route = build_vehicle_exit_route(spot, from_pos=vehicle.position)
+                        state.vehicles[i] = vehicle.model_copy(update={
+                            "status": VehicleStatus.leaving,
+                            "spot_id": None,
+                            "route": route,
+                            "route_index": 0,
+                        })
+
+    # Orphan reserved / occupied ids (vehicle gone or departed).
+    live_ids = {v.id for v in active}
+    for spot in state.parking_spots:
+        dirty = False
+        occupied = spot.occupied_vehicle_id
+        reserved = spot.reserved_vehicle_id
+        updates = {}
+        if occupied and occupied not in live_ids:
+            updates["occupied_vehicle_id"] = None
+            dirty = True
+        if reserved and reserved not in live_ids:
+            updates["reserved_vehicle_id"] = None
+            dirty = True
+        if dirty:
+            _update_spot(state, spot.id, spot.model_copy(update=updates))
+            state.events = add_event_with_cooldown(
+                state.events,
+                state.event_cooldowns,
+                f"invariant:orphan-spot:{spot.id}",
+                YIELD_EVENT_COOLDOWN_TICKS,
+                state.tick,
+                f"Cleared orphan occupancy on {spot.id}.",
+                "dispatch",
+            )
+
+    # Snap drifted stationary cars onto their bay center (seed/coord bugs).
+    from app.state import spot_center
+
+    stationary = {
+        VehicleStatus.parked, VehicleStatus.waiting, VehicleStatus.charging,
+        VehicleStatus.completed, VehicleStatus.assigned, VehicleStatus.backup_needed,
+    }
+    for i, vehicle in enumerate(state.vehicles):
+        if vehicle.status not in stationary or not vehicle.spot_id:
+            continue
+        try:
+            center = spot_center(vehicle.spot_id)
+        except ValueError:
+            continue
+        if abs(vehicle.position.x - center.x) > 0.5 or abs(vehicle.position.y - center.y) > 0.5:
+            state.vehicles[i] = vehicle.model_copy(update={"position": center})
+            state.events = add_event_with_cooldown(
+                state.events,
+                state.event_cooldowns,
+                f"invariant:snap:{vehicle.id}",
+                YIELD_EVENT_COOLDOWN_TICKS,
+                state.tick,
+                f"Snapped {vehicle.id} to {vehicle.spot_id} center.",
+                "dispatch",
+            )
+
+    # Non-orthogonal moving routes → rebuild once.
+    for i, vehicle in enumerate(state.vehicles):
+        if vehicle.status not in (VehicleStatus.entering, VehicleStatus.leaving):
+            continue
+        if not vehicle.route or assert_orthogonal_route(vehicle.route):
+            continue
+        spot = find_spot_by_id(state.parking_spots, vehicle.spot_id or "")
+        if not spot:
+            continue
+        if vehicle.status == VehicleStatus.entering:
+            route = build_vehicle_entry_route(spot, vehicle.position)
+        else:
+            route = build_vehicle_exit_route(spot, from_pos=vehicle.position)
+        state.vehicles[i] = vehicle.model_copy(update={"route": route, "route_index": 0})
+        state.events = add_event_with_cooldown(
+            state.events,
+            state.event_cooldowns,
+            f"invariant:reroute:{vehicle.id}",
+            YIELD_EVENT_COOLDOWN_TICKS,
+            state.tick,
+            f"Rebuilt non-orthogonal route for {vehicle.id}.",
+            "dispatch",
+        )
 
 
 def _tick_idle_manual(state: AppState, elapsed_seconds: float) -> None:

@@ -15,7 +15,6 @@ class SpawnPlanEntry(TypedDict):
     spawn_at_tick: int
     departure_offset: int
     requested_kwh: float
-    parking_category: str
 
 
 # Only one scripted arrival during the demo story; overnight fleet is pre-seeded.
@@ -30,7 +29,6 @@ DEMO_VEHICLE_SPAWN_PLAN: list[SpawnPlanEntry] = [
         "spawn_at_tick": 10,
         "departure_offset": 12000,
         "requested_kwh": 22.0,
-        "parking_category": "overnight",
     },
 ]
 

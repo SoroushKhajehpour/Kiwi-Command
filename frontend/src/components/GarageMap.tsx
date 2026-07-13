@@ -147,8 +147,8 @@ export function GarageMap({
               style={{
                 left: `${bay.position.x}%`,
                 top: `${bay.position.y}%`,
-                width: bay.id === "dock-C" ? "2.4%" : "5.5%",
-                height: bay.id === "dock-C" ? "5.5%" : "7%",
+                width: bay.id === "dock-C" ? "3.2%" : "5.5%",
+                height: bay.id === "dock-C" ? "6.5%" : "7%",
               }}
             >
               <span className="absolute left-1/2 top-0.5 -translate-x-1/2 whitespace-nowrap font-mono text-[6px] font-bold tracking-[0.12em] text-kiwi-dark">
@@ -190,7 +190,8 @@ export function GarageMap({
               y2={connection.y}
               stroke="#A7D421"
               strokeLinecap="round"
-              strokeWidth=".8"
+              strokeWidth="1.1"
+              opacity="0.95"
             />
           ))}
         </svg>
@@ -216,7 +217,11 @@ export function GarageMap({
         })}
 
         {floorVehicles.map((vehicle) => (
-          <MovingVehicleMarker key={vehicle.id} vehicle={vehicle} />
+          <MovingVehicleMarker
+            key={vehicle.id}
+            vehicle={vehicle}
+            onSelect={onSelectSpot}
+          />
         ))}
 
         {robots.map((robot) => <RobotMarker key={robot.id} robot={robot} />)}

@@ -50,12 +50,6 @@ async function post(path: string, body?: unknown): Promise<ApiSystemState> {
   return response.json();
 }
 
-export async function fetchState(): Promise<ApiSystemState> {
-  const response = await fetchWithTimeout(`${API_URL}/api/state`);
-  if (!response.ok) throw new Error(await readError(response));
-  return response.json();
-}
-
 export const api = {
   startDemo: () => post("/api/demo/start"),
   pauseDemo: () => post("/api/demo/pause"),

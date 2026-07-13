@@ -25,28 +25,37 @@ MODELS = [
 PAINTS = list(VehiclePaint)
 
 
+def is_spot_available(spot: ParkingSpot, vehicles: list[Vehicle] | None = None) -> bool:
+    if spot.occupied_vehicle_id or spot.reserved_vehicle_id:
+        return False
+    if not vehicles:
+        return True
+    for vehicle in vehicles:
+        if vehicle.status == VehicleStatus.departed:
+            continue
+        # Leaving cars still hold the bay until cleared.
+        if vehicle.spot_id == spot.id:
+            return False
+    return True
+
+
 def find_available_spot(
     spots: list[ParkingSpot],
     vehicles: list[Vehicle] | None = None,
 ) -> ParkingSpot | None:
     """Free = not occupied, not reserved, and no live vehicle still assigned to it."""
-    claimed: set[str] = set()
-    if vehicles:
-        for vehicle in vehicles:
-            if vehicle.status == VehicleStatus.departed:
-                continue
-            if vehicle.spot_id:
-                claimed.add(vehicle.spot_id)
+    return next((s for s in spots if is_spot_available(s, vehicles)), None)
 
-    return next(
-        (
-            s for s in spots
-            if not s.occupied_vehicle_id
-            and not s.reserved_vehicle_id
-            and s.id not in claimed
-        ),
-        None,
-    )
+
+def get_available_planned_or_fallback_spot(
+    planned_spot_id: str,
+    spots: list[ParkingSpot],
+    vehicles: list[Vehicle],
+) -> ParkingSpot | None:
+    planned = find_spot_by_id(spots, planned_spot_id)
+    if planned and is_spot_available(planned, vehicles):
+        return planned
+    return find_available_spot(spots, vehicles)
 
 
 def find_spot_by_id(spots: list[ParkingSpot], spot_id: str) -> ParkingSpot | None:
@@ -67,7 +76,9 @@ def should_skip_arrival(vehicles: list[Vehicle], spots: list[ParkingSpot]) -> bo
     return occupancy_ratio(vehicles, spots) >= TARGET_OCCUPANCY_MAX
 
 
-def reserve_spot(spot: ParkingSpot, vehicle_id: str) -> ParkingSpot:
+def reserve_spot(spot: ParkingSpot, vehicle_id: str) -> ParkingSpot | None:
+    if spot.occupied_vehicle_id and spot.occupied_vehicle_id != vehicle_id:
+        return None
     return spot.model_copy(update={"reserved_vehicle_id": vehicle_id})
 
 

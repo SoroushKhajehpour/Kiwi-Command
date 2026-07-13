@@ -1,18 +1,18 @@
-import { advanceRobot as advanceRobotBase, headingTo } from "../movement";
+import { headingTo } from "../movement";
 import type { GaragePosition, ParkingSpot, Robot, Vehicle } from "../types";
 import {
   ARRIVAL_DISTANCE_THRESHOLD,
+  MAX_VEHICLE_YIELD_TICKS,
   MAX_YIELD_TICKS,
+  ROBOT_COLLISION_RADIUS,
   ROBOT_MAP_UNITS_PER_SECOND,
+  VEHICLE_COLLISION_RADIUS,
   VEHICLE_MAP_UNITS_PER_SECOND,
 } from "./constants";
 import { hasReachedPosition, isPositionSafeForRobot } from "./collision";
+import { buildDetourAroundObstacle } from "./routes";
 
-export { headingTo } from "../movement";
-
-export function advanceRobot(robot: Robot, elapsedSeconds: number) {
-  return advanceRobotBase(robot, elapsedSeconds);
-}
+const MOVING_VEHICLE = new Set(["leaving", "entering", "parking"]);
 
 function nextOrthogonalTarget(
   pos: GaragePosition,
@@ -107,6 +107,26 @@ function advanceAlongRoute(
   };
 }
 
+function nearestBlockingVehicle(
+  position: GaragePosition,
+  vehicles: Vehicle[],
+  ignoreVehicleId: string | null,
+  radius: number,
+): Vehicle | null {
+  let nearest: Vehicle | null = null;
+  let nearestDist = Infinity;
+  for (const vehicle of vehicles) {
+    if (vehicle.status === "departed") continue;
+    if (ignoreVehicleId && vehicle.id === ignoreVehicleId) continue;
+    const dist = Math.hypot(position.x - vehicle.position.x, position.y - vehicle.position.y);
+    if (dist < radius && dist < nearestDist) {
+      nearest = vehicle;
+      nearestDist = dist;
+    }
+  }
+  return nearest;
+}
+
 export function advanceRobotWithCollisionAvoidance(
   robot: Robot,
   elapsedSeconds: number,
@@ -130,6 +150,43 @@ export function advanceRobotWithCollisionAvoidance(
   const final = robot.route[robot.route.length - 1];
   const nearFinal = hasReachedPosition(robot.position, final, ARRIVAL_DISTANCE_THRESHOLD * 2.5);
   const ignoreVehicleId = robot.status === "en-route" ? robot.assignedVehicleId : null;
+  const vehicleNearby = nearestBlockingVehicle(
+    robot.position,
+    vehicles,
+    nearFinal ? ignoreVehicleId : null,
+    ROBOT_COLLISION_RADIUS + VEHICLE_COLLISION_RADIUS + 3,
+  );
+  const movingCar = Boolean(vehicleNearby && MOVING_VEHICLE.has(vehicleNearby.status));
+  const yieldStarted = robot.lastYieldTick ?? currentTick;
+  const blockedTicks = robot.lastYieldTick ? currentTick - robot.lastYieldTick : 0;
+
+  // Leaving/entering cars: peel onto a parallel aisle immediately.
+  if (vehicleNearby && movingCar && !nearFinal) {
+    const detour = buildDetourAroundObstacle(robot.position, final, vehicleNearby.position);
+    if (detour.length > 0) {
+      const moved = advanceAlongRoute(
+        robot.position,
+        0,
+        detour,
+        headingTo(robot.position, detour[0]),
+        ROBOT_MAP_UNITS_PER_SECOND,
+        elapsedSeconds,
+      );
+      return {
+        robot: {
+          ...robot,
+          route: detour,
+          routeIndex: moved.routeIndex,
+          position: moved.position,
+          heading: moved.heading,
+          motionState: "moving",
+          lastYieldTick: undefined,
+        },
+        arrived: moved.arrived,
+        yielded: false,
+      };
+    }
+  }
 
   const preview = advanceAlongRoute(
     robot.position,
@@ -145,21 +202,47 @@ export function advanceRobotWithCollisionAvoidance(
     finalApproach: nearFinal,
   });
 
-  if (!safe) {
-    const started = robot.lastYieldTick ?? currentTick;
-    if (robot.lastYieldTick && currentTick - robot.lastYieldTick >= MAX_YIELD_TICKS) {
-      safe = true;
-    } else {
-      return {
-        robot: {
-          ...robot,
-          lastYieldTick: robot.lastYieldTick ? robot.lastYieldTick : currentTick,
-          motionState: "yielding",
-        },
-        arrived: false,
-        yielded: true,
-      };
+  // After a short hold (or against a moving car), force progress — never deadlock.
+  if (!safe && (blockedTicks >= MAX_YIELD_TICKS || movingCar)) {
+    if (vehicleNearby) {
+      const detour = buildDetourAroundObstacle(robot.position, final, vehicleNearby.position);
+      if (detour.length > 0) {
+        const moved = advanceAlongRoute(
+          robot.position,
+          0,
+          detour,
+          headingTo(robot.position, detour[0]),
+          ROBOT_MAP_UNITS_PER_SECOND * 0.85,
+          elapsedSeconds,
+        );
+        return {
+          robot: {
+            ...robot,
+            route: detour,
+            routeIndex: moved.routeIndex,
+            position: moved.position,
+            heading: moved.heading,
+            motionState: "moving",
+            lastYieldTick: undefined,
+          },
+          arrived: moved.arrived,
+          yielded: false,
+        };
+      }
     }
+    safe = true;
+  }
+
+  if (!safe) {
+    return {
+      robot: {
+        ...robot,
+        lastYieldTick: robot.lastYieldTick ? robot.lastYieldTick : currentTick,
+        motionState: "yielding",
+      },
+      arrived: false,
+      yielded: true,
+    };
   }
 
   const moved = advanceAlongRoute(
@@ -179,7 +262,7 @@ export function advanceRobotWithCollisionAvoidance(
       heading: moved.heading,
       status: robot.status,
       motionState: "moving",
-      lastYieldTick: moved.arrived || safe ? undefined : robot.lastYieldTick,
+      lastYieldTick: moved.arrived || safe ? undefined : yieldStarted,
     },
     arrived: moved.arrived,
     yielded: false,
@@ -215,15 +298,34 @@ export function advanceVehicleWithCollisionAvoidance(
     { preferVertical: true, singleAxisPerTick: true },
   );
 
-  // Prefer demo progress: cars only soft-yield to other moving cars (robots yield to cars).
   const blockedByCar = vehicles.some((other) => (
     other.id !== vehicle.id
-    && (other.status === "entering" || other.status === "parking" || other.status === "leaving")
+    && other.status !== "departed"
     && Math.hypot(preview.position.x - other.position.x, preview.position.y - other.position.y) < 6
   ));
 
   if (blockedByCar) {
     return { vehicle, arrived: false, yielded: true };
+  }
+
+  const robotBlocked = robots.some((robot) => (
+    robot.status !== "docked"
+    && robot.status !== "idle"
+    && robot.status !== "faulted"
+    && Math.hypot(preview.position.x - robot.position.x, preview.position.y - robot.position.y)
+      < ROBOT_COLLISION_RADIUS + VEHICLE_COLLISION_RADIUS
+  ));
+  if (robotBlocked) {
+    const yieldStart = vehicle.lastYieldTick ?? currentTick;
+    const yieldedFor = vehicle.lastYieldTick ? currentTick - yieldStart : 0;
+    const maxWait = vehicle.status === "leaving" ? 3 : MAX_VEHICLE_YIELD_TICKS;
+    if (!vehicle.lastYieldTick || yieldedFor < maxWait) {
+      return {
+        vehicle: { ...vehicle, lastYieldTick: vehicle.lastYieldTick ?? currentTick },
+        arrived: false,
+        yielded: true,
+      };
+    }
   }
 
   const moved = advanceAlongRoute(
@@ -242,6 +344,7 @@ export function advanceVehicleWithCollisionAvoidance(
       position: moved.position,
       routeIndex: moved.routeIndex,
       heading: moved.heading,
+      lastYieldTick: 0,
     },
     arrived: moved.arrived,
     yielded: false,

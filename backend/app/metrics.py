@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.routing import eta_seconds_for_route
-from app.schemas import EventLogItem, Metrics, RobotStatus, SessionStatus, SystemState, VehicleStatus
+from app.schemas import Metrics, RobotStatus, SessionStatus, SystemState, VehicleStatus
 
 
 def derive_metrics(state: SystemState) -> Metrics:

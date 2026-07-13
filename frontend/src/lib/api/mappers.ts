@@ -160,7 +160,9 @@ export function mapDockBay(bay: {
     id: bay.id,
     position: mapPosition(bay.position),
     label: bay.label ?? bay.id.replace("dock-", ""),
-    orientation: bay.orientation ?? undefined,
+    orientation: (bay.orientation === "horizontal" || bay.orientation === "vertical")
+      ? bay.orientation
+      : undefined,
   };
 }
 

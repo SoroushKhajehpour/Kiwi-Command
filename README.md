@@ -21,6 +21,7 @@ python3 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 # Prefer no --reload for a stable demo (avoids WatchFiles restart loops on iCloud Desktop)
+# WebSockets need the `websockets` package (listed in requirements.txt)
 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 

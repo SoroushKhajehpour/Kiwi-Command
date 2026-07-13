@@ -46,11 +46,6 @@ export function hasActiveSessionForVehicle(
   ));
 }
 
-export function isSessionComplete(session: ChargingSession): boolean {
-  return session.status === "completed"
-    || session.energyKwh >= session.requestedKwh - 0.0001;
-}
-
 /**
  * Single source of truth for header + selected-job primary button labels.
  * Uses vehicle status first, with session as a safety check for "completed".
@@ -86,6 +81,26 @@ export function getSelectedVehicleAction(
       variant: "primary",
       disabled: false,
       actionType: "new-request",
+    };
+  }
+
+  // Fault is available whenever a live robot is assigned / charging this job.
+  const robotFaultable = Boolean(
+    assignedRobot
+    && (assignedRobot.status === "en-route" || assignedRobot.status === "charging"),
+  );
+  if (
+    vehicle.status === "charging"
+    || vehicle.status === "assigned"
+    || vehicle.status === "en_route"
+    || (robotFaultable && sessionInProgress)
+  ) {
+    return {
+      label: "Simulate Robot Fault",
+      variant: "danger",
+      // Always clickable — handler reports clearly if no robot is resolved.
+      disabled: false,
+      actionType: "fault",
     };
   }
 
@@ -135,29 +150,6 @@ export function getSelectedVehicleAction(
         variant: "primary",
         disabled: !canDispatch,
         actionType: "backup",
-      };
-    case "assigned":
-    case "en_route":
-      if (!sessionInProgress || !assignedRobot) {
-        return {
-          label: autoDispatch ? "Waiting for dispatch" : "Dispatch Robot",
-          variant: autoDispatch ? "disabled" : "primary",
-          disabled: autoDispatch || !canDispatch,
-          actionType: autoDispatch ? "none" : "dispatch",
-        };
-      }
-      return {
-        label: "Job In Progress",
-        variant: "disabled",
-        disabled: true,
-        actionType: "none",
-      };
-    case "charging":
-      return {
-        label: "Simulate Robot Fault",
-        variant: "danger",
-        disabled: !assignedRobot || assignedRobot.status !== "charging",
-        actionType: "fault",
       };
     default:
       return {

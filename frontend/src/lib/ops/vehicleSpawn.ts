@@ -38,8 +38,30 @@ export function resetVehicleCounter(start = 9000): void {
   vehicleCounter = start;
 }
 
-export function findAvailableSpot(spots: ParkingSpot[]): ParkingSpot | null {
-  return spots.find((spot) => !spot.occupiedVehicleId && !spot.reservedVehicleId) ?? null;
+export function findAvailableSpot(spots: ParkingSpot[], vehicles: Vehicle[] = []): ParkingSpot | null {
+  const claimed = new Set(
+    vehicles
+      .filter((v) => v.status !== "departed" && v.spotId)
+      .map((v) => v.spotId as string),
+  );
+  return spots.find((spot) => (
+    !spot.occupiedVehicleId
+    && !spot.reservedVehicleId
+    && !claimed.has(spot.id)
+  )) ?? null;
+}
+
+export function getAvailablePlannedOrFallbackSpot(
+  plannedSpotId: string,
+  spots: ParkingSpot[],
+  vehicles: Vehicle[],
+): ParkingSpot | null {
+  const planned = findSpotById(spots, plannedSpotId);
+  if (planned && !planned.occupiedVehicleId && !planned.reservedVehicleId) {
+    const claimed = vehicles.some((v) => v.status !== "departed" && v.spotId === planned.id);
+    if (!claimed) return planned;
+  }
+  return findAvailableSpot(spots, vehicles);
 }
 
 export function findSpotById(spots: ParkingSpot[], spotId: string): ParkingSpot | null {
@@ -50,7 +72,10 @@ export function countActiveVehicles(vehicles: Vehicle[]): number {
   return vehicles.filter((v) => v.status !== "departed").length;
 }
 
-export function reserveSpot(spot: ParkingSpot, vehicleId: string): ParkingSpot {
+export function reserveSpot(spot: ParkingSpot, vehicleId: string): ParkingSpot | null {
+  if (spot.occupiedVehicleId && spot.occupiedVehicleId !== vehicleId) {
+    return null;
+  }
   return { ...spot, reservedVehicleId: vehicleId };
 }
 

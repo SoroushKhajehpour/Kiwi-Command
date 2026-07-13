@@ -2,27 +2,20 @@
 
 from __future__ import annotations
 
-import math
-
 from app.dispatch import select_best_robot, select_next_job
-from app.routing import build_route_to_dock, get_available_dock_bay, occupied_dock_ids
+from app.routing import build_route_to_dock, calculate_distance, get_available_dock_bay, occupied_dock_ids
 from app.schemas import (
     ChargingSession,
     DispatchDecision,
     DockBay,
     FaultType,
     ParkingSpot,
-    Position,
     Robot,
     RobotStatus,
     SessionStatus,
     Vehicle,
     VehicleStatus,
 )
-
-
-def _distance(a: Position, b: Position) -> float:
-    return math.hypot(a.x - b.x, a.y - b.y)
 
 
 def apply_fault(
@@ -70,7 +63,7 @@ def clear_fault(robot: Robot, robots: list[Robot], dock_bays: list[DockBay], blo
     bay = get_available_dock_bay(dock_bays, occupied, robot_id=robot.id)
 
     # Already at (or very near) home dock → available immediately.
-    if bay and _distance(robot.position, bay.position) < 2.0:
+    if bay and calculate_distance(robot.position, bay.position) < 2.0:
         return [
             r.model_copy(update={
                 "status": RobotStatus.docked,

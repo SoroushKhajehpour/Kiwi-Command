@@ -15,7 +15,6 @@ from app.schemas import (
     RobotStatus,
     SessionStatus,
     Vehicle,
-    VehiclePriority,
     VehicleStatus,
 )
 
@@ -281,7 +280,11 @@ def requeue_vehicle(
     return vehicles, sessions
 
 
-def vehicle_parks(vehicle: Vehicle, spot: ParkingSpot) -> tuple[Vehicle, ParkingSpot]:
+def vehicle_parks(vehicle: Vehicle, spot: ParkingSpot) -> tuple[Vehicle, ParkingSpot] | None:
+    if spot.occupied_vehicle_id and spot.occupied_vehicle_id != vehicle.id:
+        return None
+    if spot.reserved_vehicle_id and spot.reserved_vehicle_id != vehicle.id:
+        return None
     heading = 0 if spot.row == "top" else 180
     parked = vehicle.model_copy(update={
         "status": VehicleStatus.parked,
@@ -299,7 +302,7 @@ def vehicle_parks(vehicle: Vehicle, spot: ParkingSpot) -> tuple[Vehicle, Parking
 
 
 def vehicle_departs(vehicle: Vehicle, spot: ParkingSpot, exit_route: list) -> tuple[Vehicle, ParkingSpot]:
-    # Keep spot_id + occupancy until the car fully exits so nothing can spawn on top.
+    # Keep spot_id + occupancy until the car clears the stall / exits.
     leaving = vehicle.model_copy(update={
         "status": VehicleStatus.leaving,
         "route": exit_route,

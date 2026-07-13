@@ -106,6 +106,7 @@ class Vehicle(BaseModel):
     route_index: int = 0
     heading: float = 0.0
     completed_at_tick: Optional[int] = None
+    last_yield_tick: int = 0
 
 
 class Robot(BaseModel):

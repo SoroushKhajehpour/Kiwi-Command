@@ -10,7 +10,6 @@ export interface DemoSpawnPlanEntry {
   spawnAtTick: number;
   departureOffset: number;
   requestedKwh: number;
-  parkingCategory: "overnight" | "short_stay";
 }
 
 /** Only one scripted arrival; overnight fleet is pre-seeded. */
@@ -25,9 +24,7 @@ export const DEMO_VEHICLE_SPAWN_PLAN: DemoSpawnPlanEntry[] = [
     spawnAtTick: 10,
     departureOffset: 12000,
     requestedKwh: 22,
-    parkingCategory: "overnight",
   },
 ];
 
-export const OVERNIGHT_PROBABILITY = 0.85;
 export const DEMO_TARGET_VEHICLE_ID = "EV-4466";

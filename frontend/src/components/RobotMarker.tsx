@@ -14,14 +14,14 @@ export function RobotMarker({ robot }: { robot: Robot }) {
         left: `${robot.position.x}%`,
         top: `${robot.position.y}%`,
         // No tween when snapping onto a dock / service point — avoids the size/jump pop.
-        transition: moving ? "left 120ms linear, top 120ms linear" : "none",
+        transition: moving ? "left 160ms linear, top 160ms linear" : "none",
       }}
     >
       <div
         className="origin-center will-change-transform"
         style={{
           transform: `rotate(${robot.heading}deg)`,
-          transition: moving ? "transform 160ms ease-out" : "none",
+          transition: moving ? "transform 180ms ease-out" : "none",
         }}
       >
         <KiwiRobotTopView charging={robot.status === "charging" || dockCharging} className="w-full" />

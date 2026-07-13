@@ -94,6 +94,7 @@ export interface Vehicle {
   arrivalTick: number;
   expectedDepartureTick: number;
   completedAtTick?: number;
+  lastYieldTick?: number;
 }
 
 export interface ParkingSpot {

@@ -16,12 +16,10 @@ import type {
 export const GARAGE_NAME = "Lakeshore West Garage";
 export const GARAGE_LEVEL = "Level P2";
 
-export const DOCK_POSITION: GaragePosition = { x: 7, y: 16 };
-
 export const DOCK_BAYS: DockBay[] = [
   { id: "dock-A", position: { x: 7, y: 16 }, label: "A", orientation: "horizontal" },
   { id: "dock-B", position: { x: 6, y: 76 }, label: "B", orientation: "horizontal" },
-  { id: "dock-C", position: { x: 99, y: 84 }, label: "C", orientation: "horizontal" },
+  { id: "dock-C", position: { x: 96, y: 72 }, label: "C", orientation: "vertical" },
 ];
 
 const topRowX = [18, 27, 36, 45, 54, 63, 72, 81, 90];
@@ -41,8 +39,8 @@ function makeSpot(
     rotation,
     row,
     servicePoint: {
-      x: position.x + 3,
-      y: rotation === 0 ? 28 : 72,
+      x: position.x + 3.2,
+      y: rotation === 0 ? 27 : 73,
     },
     vehicleId,
     occupiedVehicleId: vehicleId,
@@ -50,10 +48,10 @@ function makeSpot(
 }
 
 export const INITIAL_VEHICLES: Vehicle[] = [
-  { id: "EV-4712", spotId: "P2-15", model: "Polestar 2", paint: "white", battery: 76, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal", position: { x: 18, y: 16 }, targetBattery: 80, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 120 },
-  { id: "EV-4821", spotId: "P2-18", model: "Hyundai IONIQ 5", paint: "charcoal", battery: 18, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 28, priority: "Urgent", position: { x: 45, y: 16 }, targetBattery: 75, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 80 },
-  { id: "EV-2054", spotId: "P2-20", model: "Tesla Model 3", paint: "black", battery: 64, status: "charging", assignedRobotId: "R-02", requestedEnergyKwh: 24, priority: "Normal", position: { x: 54, y: 16 }, targetBattery: 85, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 100 },
-  { id: "EV-7391", spotId: "P2-22", model: "Kia EV6", paint: "white", battery: 92, status: "completed", assignedRobotId: null, requestedEnergyKwh: 18.8, priority: "Normal", position: { x: 72, y: 16 }, targetBattery: 90, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 60 },
+  { id: "EV-4712", spotId: "P2-15", model: "Polestar 2", paint: "white", battery: 76, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal", position: { x: 27, y: 16 }, targetBattery: 80, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 120 },
+  { id: "EV-4821", spotId: "P2-18", model: "Hyundai IONIQ 5", paint: "charcoal", battery: 18, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 28, priority: "Urgent", position: { x: 54, y: 16 }, targetBattery: 75, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 80 },
+  { id: "EV-2054", spotId: "P2-20", model: "Tesla Model 3", paint: "black", battery: 64, status: "charging", assignedRobotId: "R-02", requestedEnergyKwh: 24, priority: "Normal", position: { x: 72, y: 16 }, targetBattery: 85, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 100 },
+  { id: "EV-7391", spotId: "P2-22", model: "Kia EV6", paint: "white", battery: 92, status: "completed", assignedRobotId: null, requestedEnergyKwh: 18.8, priority: "Normal", position: { x: 90, y: 16 }, targetBattery: 90, route: [], routeIndex: 0, heading: 0, arrivalTick: 0, expectedDepartureTick: 60 },
   { id: "EV-3568", spotId: "A2", model: "Ford Mustang Mach-E", paint: "silver", battery: 41, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal", position: { x: 27, y: 84 }, targetBattery: 80, route: [], routeIndex: 0, heading: 180, arrivalTick: 0, expectedDepartureTick: 140 },
   { id: "EV-4466", spotId: "A5", model: "Nissan Ariya", paint: "silver", battery: 29, status: "waiting", assignedRobotId: null, requestedEnergyKwh: 22, priority: "Normal", position: { x: 54, y: 84 }, targetBattery: 75, route: [], routeIndex: 0, heading: 180, arrivalTick: 0, expectedDepartureTick: 90 },
   { id: "EV-1730", spotId: "A8", model: "Tesla Model Y", paint: "blue", battery: 67, status: "parked", assignedRobotId: null, requestedEnergyKwh: null, priority: "Normal", position: { x: 81, y: 84 }, targetBattery: 85, route: [], routeIndex: 0, heading: 180, arrivalTick: 0, expectedDepartureTick: 150 },
@@ -92,7 +90,7 @@ export const INITIAL_ROBOTS: Robot[] = [
     name: "R-02",
     status: "charging",
     battery: 64,
-    position: { x: 66, y: 28 },
+    position: { x: 75.2, y: 27 },
     targetPosition: null,
     route: [],
     routeIndex: 0,

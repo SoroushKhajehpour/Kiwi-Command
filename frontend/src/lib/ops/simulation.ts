@@ -29,6 +29,7 @@ import { buildVehicleExitRoute } from "./routes";
 import {
   applyFaultToState,
   assignRobot,
+  clearSpotAfterDeparture,
   completeCharging,
   createEvent,
   dockRobot,
@@ -45,6 +46,7 @@ import {
   countActiveVehicles,
   findAvailableSpot,
   findSpotById,
+  getAvailablePlannedOrFallbackSpot,
   reserveSpot,
   spawnVehicle,
 } from "./vehicleSpawn";
@@ -210,6 +212,13 @@ function maybeSpawnVehicle(state: {
     };
   }
 
+  if (vehicles.some((v) => v.status === "leaving")) {
+    return {
+      vehicles, spots, spawnCount, spawnPlanIndex, scriptedVehicleId, newEvents,
+      nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
+    };
+  }
+
   let plan: (typeof DEMO_VEHICLE_SPAWN_PLAN)[number] | null =
     spawnPlanIndex < DEMO_VEHICLE_SPAWN_PLAN.length
       ? DEMO_VEHICLE_SPAWN_PLAN[spawnPlanIndex]
@@ -230,18 +239,15 @@ function maybeSpawnVehicle(state: {
         nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
       };
     }
-    const preferred = findSpotById(spots, plan.spotId);
-    if (preferred && !preferred.occupiedVehicleId && !preferred.reservedVehicleId) {
-      target = preferred;
-    } else {
+    target = getAvailablePlannedOrFallbackSpot(plan.spotId, spots, vehicles);
+    if (!target) {
       return {
-        vehicles, spots, spawnCount, scriptedVehicleId, newEvents,
-        spawnPlanIndex: spawnPlanIndex + 1,
+        vehicles, spots, spawnCount, spawnPlanIndex, scriptedVehicleId, newEvents,
         nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
       };
     }
   } else {
-    target = findAvailableSpot(spots);
+    target = findAvailableSpot(spots, vehicles);
   }
 
   if (!target) {
@@ -255,7 +261,14 @@ function maybeSpawnVehicle(state: {
     plan: plan ?? undefined,
     vehicleId: plan?.id,
   });
-  spots = spots.map((s) => (s.id === target!.id ? reserveSpot(s, vehicle.id) : s));
+  const reserved = reserveSpot(target, vehicle.id);
+  if (!reserved) {
+    return {
+      vehicles, spots, spawnCount, spawnPlanIndex, scriptedVehicleId, newEvents,
+      nextSpawnTick: currentTick + SPAWN_RETRY_COOLDOWN_TICKS,
+    };
+  }
+  spots = spots.map((s) => (s.id === target!.id ? reserved : s));
   vehicles = [...vehicles, vehicle];
   spawnCount += 1;
   if (plan) {
@@ -365,32 +378,51 @@ export function tickSimulation(
 
         let updated = move.vehicle;
 
+        // Free bay once the leaving car reaches the aisle (first exit waypoint).
+        if (vehicle.status === "leaving" && vehicle.spotId && updated.routeIndex >= 1) {
+          const held = findSpotById(spots, vehicle.spotId);
+          if (held) {
+            spots = spots.map((s) => (
+              s.id === held.id ? clearSpotAfterDeparture(held, vehicle.id) : s
+            ));
+          }
+          updated = { ...updated, spotId: null };
+        }
+
         if (move.arrived) {
           if (vehicle.status === "entering") {
             const entrySpot = vehicle.spotId
               ? findSpotById(spots, vehicle.spotId)
               : null;
-            if (
+            const canPark = Boolean(
               entrySpot
-              && (
-                !entrySpot.occupiedVehicleId
-                || entrySpot.occupiedVehicleId === vehicle.id
-                || entrySpot.reservedVehicleId === vehicle.id
-              )
-            ) {
+              && (!entrySpot.occupiedVehicleId || entrySpot.occupiedVehicleId === vehicle.id)
+              && (!entrySpot.reservedVehicleId || entrySpot.reservedVehicleId === vehicle.id)
+            );
+            if (canPark && entrySpot) {
               const parked = vehicleParks(updated, entrySpot);
-              updated = parked.vehicle;
-              spots = spots.map((s) => (s.id === entrySpot.id ? parked.spot : s));
-              newEvents.push(...pushOnce(
-                [],
-                eventKeys,
-                `parked:${vehicle.id}`,
-                parked.event.message,
-                "arrival",
-              ));
+              if (parked) {
+                updated = parked.vehicle;
+                spots = spots.map((s) => (s.id === entrySpot.id ? parked.spot : s));
+                newEvents.push(...pushOnce(
+                  [],
+                  eventKeys,
+                  `parked:${vehicle.id}`,
+                  parked.event.message,
+                  "arrival",
+                ));
+              }
             }
           } else if (vehicle.status === "leaving") {
-            updated = { ...updated, status: "departed" };
+            if (vehicle.spotId) {
+              const held = findSpotById(spots, vehicle.spotId);
+              if (held) {
+                spots = spots.map((s) => (
+                  s.id === held.id ? clearSpotAfterDeparture(held, vehicle.id) : s
+                ));
+              }
+            }
+            updated = { ...updated, status: "departed", spotId: null, route: [], routeIndex: 0 };
             newEvents.push(...pushOnce(
               [],
               eventKeys,
@@ -398,6 +430,7 @@ export function tickSimulation(
               `${vehicle.id} departed garage.`,
               "departure",
             ));
+            updatedVehicles.push(updated);
             continue;
           }
         }

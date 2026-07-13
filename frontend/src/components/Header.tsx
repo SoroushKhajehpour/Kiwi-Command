@@ -147,7 +147,7 @@ export function Header({
           >
             {abbreviatePrimary(primaryLabel)}
           </button>
-          {!isDemoActive && (
+          {(isRunning || isPaused || !isDemoActive) && (
             <button type="button" onClick={onSimulateFault} disabled={!canSimulateFault} className={ctrl}>
               Fault
             </button>

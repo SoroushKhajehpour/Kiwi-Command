@@ -40,9 +40,48 @@ def _make_spot(spot_id: str, x: float, y: float, row: str, occupied: str | None)
         id=spot_id,
         row=row,
         position=Position(x=x, y=y),
-        service_point=Position(x=x + 3, y=28 if rotation_top else 72),
+        service_point=Position(x=x + 3.2, y=27 if rotation_top else 73),
         occupied_vehicle_id=occupied,
     )
+
+
+def spot_center(spot_id: str) -> Position:
+    """Canonical bay center from id — keeps seeds aligned with painted stalls."""
+    if spot_id.startswith("P2-"):
+        idx = int(spot_id.split("-", 1)[1]) - 14
+        return Position(x=float(TOP_ROW_X[idx]), y=16.0)
+    if spot_id.startswith("A"):
+        idx = int(spot_id[1:]) - 1
+        return Position(x=float(TOP_ROW_X[idx]), y=84.0)
+    raise ValueError(f"Unknown spot id: {spot_id}")
+
+
+def snap_vehicles_to_spots(vehicles: list[Vehicle]) -> list[Vehicle]:
+    """Stationary cars must sit on their spot center (seed drift causes 'double park' visuals)."""
+    stationary = {
+        VehicleStatus.parked,
+        VehicleStatus.waiting,
+        VehicleStatus.charging,
+        VehicleStatus.completed,
+        VehicleStatus.assigned,
+        VehicleStatus.backup_needed,
+    }
+    snapped: list[Vehicle] = []
+    for vehicle in vehicles:
+        if vehicle.status not in stationary or not vehicle.spot_id:
+            snapped.append(vehicle)
+            continue
+        try:
+            center = spot_center(vehicle.spot_id)
+        except ValueError:
+            snapped.append(vehicle)
+            continue
+        if abs(vehicle.position.x - center.x) < 0.05 and abs(vehicle.position.y - center.y) < 0.05:
+            snapped.append(vehicle)
+        else:
+            snapped.append(vehicle.model_copy(update={"position": center}))
+    return snapped
+
 
 
 def build_parking_spots(occupancy: dict[str, str | None] | None = None) -> list[ParkingSpot]:
@@ -75,19 +114,20 @@ def seed_idle_state() -> dict:
         "P2-22": "EV-7391", "A2": "EV-3568", "A5": "EV-4466", "A8": "EV-1730",
     })
     vehicles = [
-        Vehicle(id="EV-4712", model="Polestar 2", paint=VehiclePaint.white, spot_id="P2-15", position=Position(x=18, y=16), status=VehicleStatus.parked, battery=76, target_battery=80, priority=VehiclePriority.normal, expected_departure_tick=12000),
-        Vehicle(id="EV-4821", model="Hyundai IONIQ 5", paint=VehiclePaint.charcoal, spot_id="P2-18", position=Position(x=45, y=16), status=VehicleStatus.waiting, battery=18, requested_energy_kwh=28, target_battery=75, priority=VehiclePriority.urgent, expected_departure_tick=10000),
-        Vehicle(id="EV-2054", model="Tesla Model 3", paint=VehiclePaint.black, spot_id="P2-20", position=Position(x=54, y=16), status=VehicleStatus.charging, battery=64, requested_energy_kwh=24, target_battery=85, assigned_robot_id="R-02", priority=VehiclePriority.normal, expected_departure_tick=11000),
-        Vehicle(id="EV-7391", model="Kia EV6", paint=VehiclePaint.white, spot_id="P2-22", position=Position(x=72, y=16), status=VehicleStatus.completed, battery=92, requested_energy_kwh=18.8, target_battery=90, priority=VehiclePriority.normal, expected_departure_tick=9000),
-        Vehicle(id="EV-3568", model="Ford Mustang Mach-E", paint=VehiclePaint.silver, spot_id="A2", position=Position(x=27, y=84), status=VehicleStatus.parked, battery=41, target_battery=80, priority=VehiclePriority.normal, heading=180, expected_departure_tick=14000),
-        Vehicle(id="EV-4466", model="Nissan Ariya", paint=VehiclePaint.silver, spot_id="A5", position=Position(x=54, y=84), status=VehicleStatus.waiting, battery=29, requested_energy_kwh=22, target_battery=75, priority=VehiclePriority.normal, heading=180, expected_departure_tick=10000),
-        Vehicle(id="EV-1730", model="Tesla Model Y", paint=VehiclePaint.blue, spot_id="A8", position=Position(x=81, y=84), status=VehicleStatus.parked, battery=67, target_battery=85, priority=VehiclePriority.normal, heading=180, expected_departure_tick=15000),
+        Vehicle(id="EV-4712", model="Polestar 2", paint=VehiclePaint.white, spot_id="P2-15", position=spot_center("P2-15"), status=VehicleStatus.parked, battery=76, target_battery=80, priority=VehiclePriority.normal, expected_departure_tick=12000),
+        Vehicle(id="EV-4821", model="Hyundai IONIQ 5", paint=VehiclePaint.charcoal, spot_id="P2-18", position=spot_center("P2-18"), status=VehicleStatus.waiting, battery=18, requested_energy_kwh=28, target_battery=75, priority=VehiclePriority.urgent, expected_departure_tick=10000),
+        Vehicle(id="EV-2054", model="Tesla Model 3", paint=VehiclePaint.black, spot_id="P2-20", position=spot_center("P2-20"), status=VehicleStatus.charging, battery=64, requested_energy_kwh=24, target_battery=85, assigned_robot_id="R-02", priority=VehiclePriority.normal, expected_departure_tick=11000),
+        Vehicle(id="EV-7391", model="Kia EV6", paint=VehiclePaint.white, spot_id="P2-22", position=spot_center("P2-22"), status=VehicleStatus.completed, battery=92, requested_energy_kwh=18.8, target_battery=90, priority=VehiclePriority.normal, expected_departure_tick=9000),
+        Vehicle(id="EV-3568", model="Ford Mustang Mach-E", paint=VehiclePaint.silver, spot_id="A2", position=spot_center("A2"), status=VehicleStatus.parked, battery=41, target_battery=80, priority=VehiclePriority.normal, heading=180, expected_departure_tick=14000),
+        Vehicle(id="EV-4466", model="Nissan Ariya", paint=VehiclePaint.silver, spot_id="A5", position=spot_center("A5"), status=VehicleStatus.waiting, battery=29, requested_energy_kwh=22, target_battery=75, priority=VehiclePriority.normal, heading=180, expected_departure_tick=10000),
+        Vehicle(id="EV-1730", model="Tesla Model Y", paint=VehiclePaint.blue, spot_id="A8", position=spot_center("A8"), status=VehicleStatus.parked, battery=67, target_battery=85, priority=VehiclePriority.normal, heading=180, expected_departure_tick=15000),
     ]
+    vehicles = snap_vehicles_to_spots(vehicles)
     dock_bays = build_dock_bays()
     robots = [
         Robot(id="R-01", name="R-01", status=RobotStatus.docked, battery=82, position=dock_bays[0].position, dock_bay_id="dock-A"),
-        Robot(id="R-02", name="R-02", status=RobotStatus.charging, battery=64, position=Position(x=66, y=28), assigned_vehicle_id="EV-2054"),
-        Robot(id="R-03", name="R-03", status=RobotStatus.returning, battery=41, position=Position(x=42, y=52), dock_bay_id="dock-C", route=[Position(x=42, y=50), Position(x=dock_bays[2].position.x, y=50), Position(x=dock_bays[2].position.x, y=72), dock_bays[2].position], heading=90),
+        Robot(id="R-02", name="R-02", status=RobotStatus.charging, battery=64, position=Position(x=spot_center("P2-20").x + 3.2, y=27), assigned_vehicle_id="EV-2054"),
+        Robot(id="R-03", name="R-03", status=RobotStatus.returning, battery=41, position=Position(x=42, y=52), dock_bay_id="dock-C", route=[Position(x=42, y=50), Position(x=dock_bays[2].position.x, y=50), Position(x=dock_bays[2].position.x, y=dock_bays[2].position.y), dock_bays[2].position], heading=90),
     ]
     sessions = [
         ChargingSession(id="S-1045", vehicle_id="EV-4466", spot_id="A5", status=SessionStatus.queued, requested_energy_kwh=22, priority_score=70),
@@ -114,13 +154,14 @@ def seed_demo_state() -> dict:
     }
     spots = build_parking_spots(occupancy)
     vehicles = [
-        Vehicle(id="EV-4712", model="Polestar 2", paint=VehiclePaint.white, spot_id="P2-15", position=Position(x=18, y=16), status=VehicleStatus.parked, battery=76, target_battery=80, priority=VehiclePriority.normal, expected_departure_tick=14000),
-        Vehicle(id="EV-4821", model="Hyundai IONIQ 5", paint=VehiclePaint.charcoal, spot_id="P2-18", position=Position(x=45, y=16), status=VehicleStatus.parked, battery=18, requested_energy_kwh=28, target_battery=80, priority=VehiclePriority.urgent, expected_departure_tick=12000),
-        Vehicle(id="EV-2054", model="Tesla Model 3", paint=VehiclePaint.black, spot_id="P2-20", position=Position(x=54, y=16), status=VehicleStatus.parked, battery=64, target_battery=70, priority=VehiclePriority.normal, expected_departure_tick=13000),
-        Vehicle(id="EV-7391", model="Kia EV6", paint=VehiclePaint.white, spot_id="P2-22", position=Position(x=72, y=16), status=VehicleStatus.parked, battery=88, target_battery=90, priority=VehiclePriority.normal, expected_departure_tick=15000),
-        Vehicle(id="EV-3568", model="Ford Mustang Mach-E", paint=VehiclePaint.silver, spot_id="A2", position=Position(x=27, y=84), status=VehicleStatus.parked, battery=41, requested_energy_kwh=22, target_battery=80, priority=VehiclePriority.normal, heading=180, expected_departure_tick=11000),
-        Vehicle(id="EV-1730", model="Tesla Model Y", paint=VehiclePaint.blue, spot_id="A8", position=Position(x=81, y=84), status=VehicleStatus.parked, battery=67, target_battery=85, priority=VehiclePriority.normal, heading=180, expected_departure_tick=16000),
+        Vehicle(id="EV-4712", model="Polestar 2", paint=VehiclePaint.white, spot_id="P2-15", position=spot_center("P2-15"), status=VehicleStatus.parked, battery=76, target_battery=80, priority=VehiclePriority.normal, expected_departure_tick=14000),
+        Vehicle(id="EV-4821", model="Hyundai IONIQ 5", paint=VehiclePaint.charcoal, spot_id="P2-18", position=spot_center("P2-18"), status=VehicleStatus.parked, battery=18, requested_energy_kwh=28, target_battery=80, priority=VehiclePriority.urgent, expected_departure_tick=12000),
+        Vehicle(id="EV-2054", model="Tesla Model 3", paint=VehiclePaint.black, spot_id="P2-20", position=spot_center("P2-20"), status=VehicleStatus.parked, battery=64, target_battery=70, priority=VehiclePriority.normal, expected_departure_tick=13000),
+        Vehicle(id="EV-7391", model="Kia EV6", paint=VehiclePaint.white, spot_id="P2-22", position=spot_center("P2-22"), status=VehicleStatus.parked, battery=88, target_battery=90, priority=VehiclePriority.normal, expected_departure_tick=15000),
+        Vehicle(id="EV-3568", model="Ford Mustang Mach-E", paint=VehiclePaint.silver, spot_id="A2", position=spot_center("A2"), status=VehicleStatus.parked, battery=41, requested_energy_kwh=22, target_battery=80, priority=VehiclePriority.normal, heading=180, expected_departure_tick=11000),
+        Vehicle(id="EV-1730", model="Tesla Model Y", paint=VehiclePaint.blue, spot_id="A8", position=spot_center("A8"), status=VehicleStatus.parked, battery=67, target_battery=85, priority=VehiclePriority.normal, heading=180, expected_departure_tick=16000),
     ]
+    vehicles = snap_vehicles_to_spots(vehicles)
     # Overnight cars stay parked (no seed jobs) so robots stay free for the
     # EV-4466 fault → backup story. Low-battery overnight requests after story.
     dock_bays = build_dock_bays()
@@ -150,7 +191,7 @@ class AppState:
         seed = seed_demo_state() if mode == "demo" else seed_idle_state()
         self.demo_mode = DemoMode.running if mode == "demo" else DemoMode.idle
         self.tick = 0
-        self.vehicles: list[Vehicle] = seed["vehicles"]
+        self.vehicles: list[Vehicle] = snap_vehicles_to_spots(seed["vehicles"])
         self.robots: list[Robot] = seed["robots"]
         self.parking_spots: list[ParkingSpot] = seed["parking_spots"]
         self.dock_bays: list[DockBay] = seed["dock_bays"]

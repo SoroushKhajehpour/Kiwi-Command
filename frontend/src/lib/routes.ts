@@ -4,6 +4,8 @@ export const METERS_PER_MAP_UNIT = 1.8;
 export const ROBOT_METERS_PER_SECOND = 1.4;
 export const DEMO_ROBOT_MAP_UNITS_PER_SECOND = 14;
 const LANE_CENTER_Y = 50;
+const TOP_ROW_LANE_Y = 36;
+const BOTTOM_ROW_LANE_Y = 64;
 
 /** Blocked stretch of the main lane near P2-18. */
 export const LANE_BLOCK_ZONE = {
@@ -35,16 +37,22 @@ export function getVehicleServicePoint(
   spot: ParkingSpot,
   side: "left" | "right" = "right",
 ): GaragePosition {
+  // Stand just outside the stall — short cable, not out on the main aisle.
+  const serviceY = spot.rotation === 0 ? 27 : 73;
   return {
-    x: spot.position.x + (side === "left" ? -4.5 : 4.5),
-    y: spot.rotation === 0 ? 28 : 72,
+    x: spot.position.x + (side === "left" ? -3.2 : 3.2),
+    y: serviceY,
   };
 }
 
-export function getVehicleConnectionPoint(spot: ParkingSpot): GaragePosition {
+export function getVehicleConnectionPoint(
+  spot: ParkingSpot,
+  side: "left" | "right" = "right",
+): GaragePosition {
+  // Plug on the car body facing the service robot.
   return {
-    x: spot.position.x,
-    y: spot.rotation === 0 ? 27 : 73,
+    x: spot.position.x + (side === "left" ? -1.8 : 1.8),
+    y: spot.rotation === 0 ? spot.position.y + 6.5 : spot.position.y - 6.5,
   };
 }
 
@@ -83,7 +91,7 @@ export function buildRouteToDock(
   bay: DockBay,
   options?: { laneBlocked?: boolean },
 ): GaragePosition[] {
-  const approachY = bay.position.y < LANE_CENTER_Y ? 28 : 72;
+  const approachY = bay.position.y < LANE_CENTER_Y ? TOP_ROW_LANE_Y : BOTTOM_ROW_LANE_Y;
   return cleanRoute(from, [
     { x: from.x, y: LANE_CENTER_Y },
     { x: bay.position.x, y: LANE_CENTER_Y },

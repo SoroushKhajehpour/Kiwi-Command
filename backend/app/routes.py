@@ -18,10 +18,6 @@ from app.websocket_manager import ConnectionManager
 router = APIRouter(prefix="/api")
 
 
-def _snapshot(app_state: AppState) -> SystemState:
-    return app_state.snapshot()
-
-
 @router.get("/health")
 async def api_health(
     app_state: AppState = Depends(get_app_state),
@@ -41,7 +37,7 @@ async def api_health(
 @router.get("/state", response_model=SystemState)
 async def get_state(app_state: AppState = Depends(get_app_state)) -> SystemState:
     async with app_state.lock:
-        return _snapshot(app_state)
+        return app_state.snapshot()
 
 
 @router.post("/demo/start", response_model=SystemState)
@@ -52,7 +48,7 @@ async def start_demo(
     async with app_state.lock:
         app_state.reset("demo")
         app_state.auto_dispatch = True
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -67,7 +63,7 @@ async def pause_demo(
             raise HTTPException(400, "Demo is not running")
         app_state.demo_mode = DemoMode.paused
         app_state.events = add_event(app_state.events, app_state.tick, "Demo paused", "dispatch")
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -82,7 +78,7 @@ async def resume_demo(
             raise HTTPException(400, "Demo is not paused")
         app_state.demo_mode = DemoMode.running
         app_state.events = add_event(app_state.events, app_state.tick, "Demo resumed", "dispatch")
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -101,7 +97,7 @@ async def end_demo(
             "Demo ended — in-flight jobs will finish",
             "dispatch",
         )
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -118,7 +114,7 @@ async def reset_demo(
             "Scenario reset to manual baseline",
             "dispatch",
         )
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -159,7 +155,7 @@ async def dispatch_vehicle(
         app_state.vehicles = [assigned if item.id == vehicle.id else item for item in app_state.vehicles]
         app_state.sessions = sessions
         app_state.last_decision = decision
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -236,7 +232,7 @@ async def create_job(
                         ]
                         app_state.sessions = sessions
                         app_state.last_decision = decision
-            snapshot = _snapshot(app_state)
+            snapshot = app_state.snapshot()
             await manager.broadcast(snapshot)
             return snapshot
 
@@ -331,7 +327,7 @@ async def create_job(
                             related_robot_id=decision.selected_robot_id,
                             related_vehicle_id=v.id,
                         )
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -344,8 +340,7 @@ async def fault_robot(
     manager: ConnectionManager = Depends(get_manager),
 ) -> SystemState:
     async with app_state.lock:
-        if app_state.demo_mode != DemoMode.idle:
-            raise HTTPException(400, "Manual faults only available in idle mode")
+        # Allow mid-demo faults so acceptance / Simulate Fault works during Run Demo.
         robot = app_state.get_robot(robot_id)
         if not robot:
             raise HTTPException(404, "Robot not found")
@@ -373,7 +368,7 @@ async def fault_robot(
             app_state.sessions = sessions
             if decision:
                 app_state.last_decision = decision
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -392,7 +387,7 @@ async def clear_robot_fault(
             raise HTTPException(400, "Robot is not faulted")
         app_state.robots = clear_fault(robot, app_state.robots, app_state.dock_bays, app_state.blocked_lane_active)
         app_state.events = add_event(app_state.events, app_state.tick, f"{robot_id} fault cleared", "fault")
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -413,7 +408,7 @@ async def toggle_lane_block(
             else f"Lane block near {label} cleared"
         )
         app_state.events = add_event(app_state.events, app_state.tick, msg, "dispatch")
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
 
@@ -433,6 +428,6 @@ async def toggle_dispatch(
             f"Dispatch mode changed to {mode}",
             "dispatch",
         )
-        snapshot = _snapshot(app_state)
+        snapshot = app_state.snapshot()
         await manager.broadcast(snapshot)
         return snapshot
